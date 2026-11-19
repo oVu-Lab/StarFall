@@ -1,0 +1,378 @@
+import * as THREE from 'three';
+import { BOT_PERSONALITIES, resolveBotDifficultyTuning } from '../../config/botPersonalities';
+import { WEAPON_CONFIGS } from '../../config/weapons';
+import type { EnemyEntity } from '../../types/combat';
+import type { ProjectilePool } from './ProjectilePool';
+
+// Reusable scratch vectors & quaternions (zero GC in frame loop)
+const _toPlayer = new THREE.Vector3();
+const _desiredPos = new THREE.Vector3();
+const _desiredDir = new THREE.Vector3();
+const _forward = new THREE.Vector3();
+const _right = new THREE.Vector3();
+const _up = new THREE.Vector3(0, 1, 0);
+const _lookMat = new THREE.Matrix4();
+const _targetQuat = new THREE.Quaternion();
+const _origin = new THREE.Vector3();
+const _muzzleLocal = new THREE.Vector3();
+const _leadPoint = new THREE.Vector3();
+const _fireDir = new THREE.Vector3();
+const _perp = new THREE.Vector3();
+const _localDir = new THREE.Vector3();
+const _invQuat = new THREE.Quaternion();
+const _zeroVec = new THREE.Vector3(0, 0, 0);
+
+export interface EnemyAIUpdateResult {
+  fired: boolean;
+  fireOrigin: THREE.Vector3;
+}
+
+const _resultOrigin = new THREE.Vector3();
+
+/**
+ * State-based Enemy Combat Pilot AI.
+ * Drives enemy starfighters through smooth quaternion turning and velocity propulsion
+ * (never snaps or teleports) across 7 tactical states:
+ * patrol -> acquire -> pursue -> engage -> evade -> reposition -> destroyed.
+ */
+export class EnemyAIController {
+  public triggerDamageReaction(
+    enemy: EnemyEntity,
+    playerPos: THREE.Vector3,
+    now: number,
+  ): void {
+    if (!enemy.active || enemy.health.isDestroyed) return;
+    enemy.hitFlashTimer = 0.14;
+
+    const personality = BOT_PERSONALITIES[enemy.personality];
+    const tuning = resolveBotDifficultyTuning(
+      personality,
+      enemy.difficultyLevel ?? enemy.difficulty,
+    );
+
+    // Already evading or repositioning — only flip flank sign occasionally
+    if (enemy.aiState === 'evade') return;
+
+    // Deterministic-feeling probabilistic jink based on personality responsiveness
+    const roll = Math.abs(Math.sin(now * 37.3 + enemy.position.x * 0.13));
+    if (roll <= tuning.evadeResponsiveness) {
+      enemy.aiState = 'evade';
+      enemy.aiStateTimer = personality.evadeDuration;
+      enemy.flankSign = enemy.flankSign === 1 ? -1 : 1;
+
+      // Compute perpendicular jink vector away from player's line of fire
+      _toPlayer.subVectors(playerPos, enemy.position).normalize();
+      _perp.crossVectors(_toPlayer, _up);
+      if (_perp.lengthSq() < 0.01) {
+        _perp.set(1, 0, 0);
+      } else {
+        _perp.normalize();
+      }
+      const verticalLift = (roll - 0.35) * 0.75;
+      enemy.evadeDir
+        .copy(_perp)
+        .multiplyScalar(enemy.flankSign)
+        .addScaledVector(_up, verticalLift)
+        .addScaledVector(_toPlayer, -0.35)
+        .normalize();
+    } else if (enemy.aiState === 'patrol') {
+      // Immediately alert if attacked while patrolling
+      enemy.aiState = 'acquire';
+      enemy.aiStateTimer = tuning.reactionTime;
+    }
+  }
+
+  public updateEnemy(
+    enemy: EnemyEntity,
+    dt: number,
+    now: number,
+    playerPos: THREE.Vector3,
+    playerVel: THREE.Vector3,
+    playerAlive: boolean,
+    projectiles: ProjectilePool,
+    allEnemies: EnemyEntity[],
+  ): EnemyAIUpdateResult {
+    const safeDt = Math.min(Math.max(dt, 0.0001), 0.05);
+    const out: EnemyAIUpdateResult = { fired: false, fireOrigin: _resultOrigin };
+
+    if (!enemy.active || enemy.health.isDestroyed) {
+      enemy.aiState = 'destroyed';
+      return out;
+    }
+
+    if (enemy.hitFlashTimer > 0) {
+      enemy.hitFlashTimer = Math.max(0, enemy.hitFlashTimer - safeDt);
+    }
+    if (enemy.muzzleFlashTimer > 0) {
+      enemy.muzzleFlashTimer = Math.max(0, enemy.muzzleFlashTimer - safeDt);
+    }
+    if (enemy.weaponCooldown > 0) {
+      enemy.weaponCooldown = Math.max(0, enemy.weaponCooldown - safeDt);
+    }
+
+    const personality = BOT_PERSONALITIES[enemy.personality];
+    const tuning = resolveBotDifficultyTuning(
+      personality,
+      enemy.difficultyLevel ?? enemy.difficulty,
+    );
+    const weapon = WEAPON_CONFIGS[personality.weaponId] ?? WEAPON_CONFIGS.enemy_pulse_aggressor;
+
+    _toPlayer.subVectors(playerPos, enemy.position);
+    const distToPlayer = _toPlayer.length();
+    const dirToPlayer = distToPlayer > 0.001 ? _toPlayer.divideScalar(distToPlayer) : _forward.set(0, 0, -1);
+
+    enemy.aiStateTimer = Math.max(0, enemy.aiStateTimer - safeDt);
+    enemy.coordinationTimer = Math.max(0, enemy.coordinationTimer - safeDt);
+
+    // Coordinated squad flank-vector shift governed by DifficultyProfile
+    if (enemy.coordinationTimer <= 0 && (enemy.aiState === 'pursue' || enemy.aiState === 'engage')) {
+      enemy.coordinationTimer = tuning.coordinationIntervalSec;
+      if (personality.flankAngleRad >= 0.45) {
+        enemy.flankSign = enemy.flankSign === 1 ? -1 : 1;
+      }
+    }
+
+    // 1. State Machine Transitions
+    if (!playerAlive) {
+      enemy.aiState = 'patrol';
+    } else {
+      switch (enemy.aiState) {
+        case 'patrol': {
+          if (distToPlayer <= personality.detectionRange) {
+            enemy.aiState = 'acquire';
+            enemy.aiStateTimer = tuning.reactionTime;
+          }
+          break;
+        }
+        case 'acquire': {
+          if (enemy.aiStateTimer <= 0) {
+            enemy.aiState = distToPlayer <= personality.engageRange ? 'engage' : 'pursue';
+            enemy.aiStateTimer = 2.4;
+          }
+          break;
+        }
+        case 'pursue': {
+          if (distToPlayer <= personality.minSafeDistance) {
+            this.beginReposition(enemy, playerPos, personality.preferredRange);
+          } else if (distToPlayer <= personality.engageRange) {
+            enemy.aiState = 'engage';
+            enemy.aiStateTimer = 3.2;
+          }
+          break;
+        }
+        case 'engage': {
+          if (distToPlayer <= personality.minSafeDistance) {
+            this.beginReposition(enemy, playerPos, personality.preferredRange);
+          } else if (distToPlayer > personality.engageRange * 1.25) {
+            enemy.aiState = 'pursue';
+            enemy.aiStateTimer = 2.5;
+          } else if (enemy.aiStateTimer <= 0 && personality.flankAngleRad > 0.45) {
+            // Flankers/Defenders/Aces periodically switch attack side to avoid predictable tail-chasing
+            enemy.flankSign = enemy.flankSign === 1 ? -1 : 1;
+            enemy.aiStateTimer = Math.max(1.8, tuning.coordinationIntervalSec);
+          }
+          break;
+        }
+        case 'evade': {
+          if (enemy.aiStateTimer <= 0) {
+            enemy.aiState = distToPlayer < personality.minSafeDistance * 1.2 ? 'reposition' : 'pursue';
+            enemy.aiStateTimer = 2.0;
+          }
+          break;
+        }
+        case 'reposition': {
+          const distToAnchor = enemy.position.distanceTo(enemy.repositionPoint);
+          if (enemy.aiStateTimer <= 0 || (distToPlayer > personality.preferredRange * 0.95 && distToAnchor < 38)) {
+            enemy.aiState = 'pursue';
+            enemy.aiStateTimer = 2.4;
+          }
+          break;
+        }
+        case 'destroyed':
+          return out;
+      }
+    }
+
+    // 2. Compute Desired Flight Vector & Speed Based on Current AI State + Personality
+    let targetSpeed = tuning.cruiseSpeed;
+
+    if (enemy.aiState === 'patrol') {
+      enemy.patrolAngle += safeDt * 0.28;
+      _desiredPos.set(
+        enemy.patrolAnchor.x + Math.cos(enemy.patrolAngle) * 110,
+        enemy.patrolAnchor.y + Math.sin(enemy.patrolAngle * 1.3) * 24,
+        enemy.patrolAnchor.z + Math.sin(enemy.patrolAngle) * 110,
+      );
+      _desiredDir.subVectors(_desiredPos, enemy.position).normalize();
+      targetSpeed = tuning.cruiseSpeed * 0.72;
+    } else if (enemy.aiState === 'acquire') {
+      _desiredDir.copy(dirToPlayer);
+      targetSpeed = tuning.cruiseSpeed * 0.85;
+    } else if (enemy.aiState === 'pursue') {
+      // Apply personality flank offset (Aggressor flies nearly direct; Flanker curves wide)
+      _perp.crossVectors(dirToPlayer, _up);
+      if (_perp.lengthSq() < 0.01) _perp.set(1, 0, 0);
+      else _perp.normalize();
+
+      const flankScale = Math.sin(personality.flankAngleRad) * enemy.flankSign * THREE.MathUtils.clamp((distToPlayer - 80) / 160, 0.25, 1.0);
+      const bobY = Math.sin(now * 0.9 + enemy.patrolAngle) * 0.16;
+
+      _desiredDir
+        .copy(dirToPlayer)
+        .addScaledVector(_perp, flankScale)
+        .addScaledVector(_up, bobY)
+        .normalize();
+      targetSpeed = distToPlayer > personality.engageRange * 1.15 ? tuning.boostSpeed : tuning.cruiseSpeed;
+    } else if (enemy.aiState === 'engage') {
+      // Lead target slightly while orbiting/closing according to personality
+      const timeToHit = THREE.MathUtils.clamp(distToPlayer / Math.max(weapon.projectileSpeed, 1), 0, 1.4);
+      _leadPoint.copy(playerPos).addScaledVector(playerVel, timeToHit * 0.72);
+      _desiredDir.subVectors(_leadPoint, enemy.position).normalize();
+
+      if (personality.id === 'defender' && distToPlayer < personality.preferredRange) {
+        // Defender strafes laterally to hold standoff distance
+        _perp.crossVectors(dirToPlayer, _up).normalize();
+        _desiredDir.addScaledVector(_perp, enemy.flankSign * 0.65).normalize();
+      } else if (personality.id === 'flanker') {
+        _perp.crossVectors(dirToPlayer, _up).normalize();
+        _desiredDir.addScaledVector(_perp, enemy.flankSign * 0.35).normalize();
+      }
+
+      targetSpeed =
+        distToPlayer > personality.preferredRange
+          ? tuning.cruiseSpeed * 1.05
+          : tuning.cruiseSpeed * 0.82;
+    } else if (enemy.aiState === 'evade') {
+      _desiredDir.copy(enemy.evadeDir);
+      targetSpeed = tuning.boostSpeed;
+    } else if (enemy.aiState === 'reposition') {
+      _desiredDir.subVectors(enemy.repositionPoint, enemy.position).normalize();
+      targetSpeed = tuning.boostSpeed * 0.96;
+    }
+
+    // 3. Soft wingman separation so enemy bots don't stack on top of each other
+    for (let i = 0; i < allEnemies.length; i++) {
+      const other = allEnemies[i];
+      if (!other.active || other.id === enemy.id || other.health.isDestroyed) continue;
+      const dx = enemy.position.x - other.position.x;
+      const dy = enemy.position.y - other.position.y;
+      const dz = enemy.position.z - other.position.z;
+      const distSq = dx * dx + dy * dy + dz * dz;
+      if (distSq > 0.01 && distSq < 900) {
+        const invDist = 1 / Math.sqrt(distSq);
+        const push = (30 - 1 / invDist) / 30;
+        _desiredDir.x += dx * invDist * push * 0.75;
+        _desiredDir.y += dy * invDist * push * 0.75;
+        _desiredDir.z += dz * invDist * push * 0.75;
+      }
+    }
+    if (_desiredDir.lengthSq() > 0.0001) {
+      _desiredDir.normalize();
+    }
+
+    // 4. Smooth Quaternion Turn Physics (strictly angular-rate-limited, never snaps!)
+    _lookMat.lookAt(_zeroVec, _desiredDir, _up);
+    _targetQuat.setFromRotationMatrix(_lookMat);
+
+    const maxStepAngle = tuning.turnRate * safeDt;
+    const angleDiff = enemy.quaternion.angleTo(_targetQuat);
+    if (angleDiff > 0.0001) {
+      const t = Math.min(1, maxStepAngle / angleDiff);
+      enemy.quaternion.slerp(_targetQuat, t);
+      enemy.quaternion.normalize();
+    }
+
+    // Compute natural visual bank angle based on local lateral turn direction
+    _invQuat.copy(enemy.quaternion).invert();
+    _localDir.copy(_desiredDir).applyQuaternion(_invQuat);
+    const desiredBank = THREE.MathUtils.clamp(-_localDir.x * 1.1, -0.65, 0.65);
+    enemy.visualBankAngle = THREE.MathUtils.damp(enemy.visualBankAngle, desiredBank, 5.5, safeDt);
+
+    // 5. Momentum-based forward propulsion along ship facing (-Z)
+    _forward.set(0, 0, -1).applyQuaternion(enemy.quaternion).normalize();
+    const desiredVelX = _forward.x * targetSpeed;
+    const desiredVelY = _forward.y * targetSpeed;
+    const desiredVelZ = _forward.z * targetSpeed;
+    const velAlpha = 1 - Math.exp(-3.4 * safeDt);
+    enemy.velocity.x = THREE.MathUtils.lerp(enemy.velocity.x, desiredVelX, velAlpha);
+    enemy.velocity.y = THREE.MathUtils.lerp(enemy.velocity.y, desiredVelY, velAlpha);
+    enemy.velocity.z = THREE.MathUtils.lerp(enemy.velocity.z, desiredVelZ, velAlpha);
+
+    enemy.position.addScaledVector(enemy.velocity, safeDt);
+
+    // 6. Tactical Burst Weapon Firing (only when aligned & inside engage envelope)
+    if (
+      playerAlive &&
+      (enemy.aiState === 'engage' || (enemy.aiState === 'pursue' && distToPlayer < personality.engageRange * 1.05))
+    ) {
+      const timeToTarget = THREE.MathUtils.clamp(distToPlayer / Math.max(weapon.projectileSpeed, 1), 0, 1.3);
+      _leadPoint.copy(playerPos).addScaledVector(playerVel, timeToTarget * 0.78);
+      _fireDir.subVectors(_leadPoint, enemy.position).normalize();
+
+      const alignment = _forward.dot(_fireDir);
+      const fireConeCos = Math.cos(THREE.MathUtils.degToRad(18));
+
+      // Manage burst cadence scaled by DifficultyProfile burstPressureScale
+      enemy.burstTimer -= safeDt;
+      if (enemy.burstTimer <= 0) {
+        enemy.burstActive = !enemy.burstActive;
+        enemy.burstTimer = enemy.burstActive
+          ? 1.05 * tuning.burstPressureScale
+          : Math.max(0.55, 1.15 / Math.max(0.5, tuning.burstPressureScale));
+      }
+
+      if (enemy.burstActive && alignment >= fireConeCos && enemy.weaponCooldown <= 0) {
+        // Apply personality + difficulty angular dispersion
+        const spread = tuning.aimSpreadRad + weapon.spreadRad;
+        _right.set(1, 0, 0).applyQuaternion(enemy.quaternion);
+        const jitterX = (Math.random() - 0.5) * 2 * spread;
+        const jitterY = (Math.random() - 0.5) * 2 * spread;
+        _fireDir
+          .addScaledVector(_right, jitterX)
+          .addScaledVector(_up, jitterY)
+          .normalize();
+
+        const muzzle = weapon.muzzleOffsets[enemy.muzzleIndex % weapon.muzzleOffsets.length];
+        enemy.muzzleIndex = (enemy.muzzleIndex + 1) % weapon.muzzleOffsets.length;
+        _muzzleLocal.set(muzzle[0], muzzle[1], muzzle[2]).applyQuaternion(enemy.quaternion);
+        _origin.copy(enemy.position).add(_muzzleLocal);
+
+        projectiles.spawn(enemy.id, 'enemy', weapon, _origin, _fireDir, enemy.velocity);
+        enemy.weaponCooldown = 1 / Math.max(0.5, weapon.fireRate * tuning.fireCadenceScale);
+        enemy.muzzleFlashTimer = 0.06;
+
+        out.fired = true;
+        out.fireOrigin.copy(_origin);
+      }
+    }
+
+    return out;
+  }
+
+  private beginReposition(
+    enemy: EnemyEntity,
+    playerPos: THREE.Vector3,
+    preferredRange: number,
+  ): void {
+    enemy.aiState = 'reposition';
+    enemy.aiStateTimer = 2.6;
+    enemy.flankSign = enemy.flankSign === 1 ? -1 : 1;
+
+    _toPlayer.subVectors(enemy.position, playerPos);
+    if (_toPlayer.lengthSq() < 0.01) {
+      _toPlayer.set(0, 0, 1);
+    } else {
+      _toPlayer.normalize();
+    }
+
+    _perp.crossVectors(_toPlayer, _up);
+    if (_perp.lengthSq() < 0.01) _perp.set(1, 0, 0);
+    else _perp.normalize();
+
+    enemy.repositionPoint
+      .copy(playerPos)
+      .addScaledVector(_toPlayer, preferredRange * 1.15)
+      .addScaledVector(_perp, enemy.flankSign * preferredRange * 0.65)
+      .addScaledVector(_up, (enemy.flankSign * 26));
+  }
+}
