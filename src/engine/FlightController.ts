@@ -1,5 +1,10 @@
 import * as THREE from 'three';
-import { STEERING_BOUNDS, STEERING_CONFIG, type SteeringMode } from '../config/steering';
+import {
+  MOUSE_ALIGNMENT_CONFIG as MA,
+  STEERING_BOUNDS,
+  STEERING_CONFIG,
+  type SteeringMode,
+} from '../config/steering';
 import type { ProjectedEnemyMarker } from '../types/combat';
 import type {
   FlightStatus,
@@ -52,11 +57,19 @@ const _FORWARD_LOCAL = new THREE.Vector3(0, 0, -1);
 const _qYaw = new THREE.Quaternion();
 const _qPitch = new THREE.Quaternion();
 const _qRoll = new THREE.Quaternion();
+const _qAimGimbalYaw = new THREE.Quaternion();
+const _qAimGimbalPitch = new THREE.Quaternion();
 const _forwardWorld = new THREE.Vector3();
 const _rightWorld = new THREE.Vector3();
 const _upWorld = new THREE.Vector3();
 const _desiredVel = new THREE.Vector3();
 const _euler = new THREE.Euler(0, 0, 0, 'YXZ');
+const _aimDirectionWorld = new THREE.Vector3();
+const _aimProjectionPoint = new THREE.Vector3();
+const _cameraRayPoint = new THREE.Vector3();
+const _cameraRayDirection = new THREE.Vector3();
+const _cameraNdcPoint = new THREE.Vector3();
+const _inverseShipQuaternion = new THREE.Quaternion();
 
 function createEmptyEnemyMarkers(count = 6): ProjectedEnemyMarker[] {
   const list: ProjectedEnemyMarker[] = [];
@@ -109,6 +122,9 @@ export function createInitialTelemetry(ship: ShipConfig): FlightTelemetry {
     aimNormalizedY: 0,
     aimScreenX: 0.5,
     aimScreenY: 0.5,
+    virtualMouseScreenX: 0.5,
+    virtualMouseScreenY: 0.5,
+    alignmentErrorPx: 0,
     aimBoundaryWidthPx: initWidthPx,
     aimBoundaryHeightPx: initHeightPx,
     aimBoundaryCornerRadiusPx: initCornerPx,
@@ -195,20 +211,12 @@ function stepAngularVelocity(
 }
 
 /**
- * Arcade 6DOF space flight controller using a Virtual Joystick mouse model.
- * Ship coordinate system: Forward = -Z, Right = +X, Up = +Y.
+ * Arcade 6DOF flight controller. Ship coordinates are Forward = -Z, Right = +X, Up = +Y.
  *
- * Virtual Joystick Pipeline:
- * 1. Relative Pointer Lock deltas from InputManager displace the logical virtual joystick
- *    vector `(joystickX, joystickY)` scaled by `mouseSensitivity` and normalized for viewport size.
- * 2. `clampToRoundedRect` keeps `(joystickX, joystickY)` strictly bounded on the centered
- *    rounded-rectangle boundary (30% W x 35% H default, scaled by `joystickRadius`), allowing
- *    indefinite physical mouse travel without runaway sensitivity or unwind lag.
- * 3. `evaluateVirtualJoystick` computes exact radial magnitude `r in [0, 1]`, applies center
- *    deadzone and the conservative smooth radial response curve, and outputs normalized
- *    `(steerX, steerY)` targets.
- * 4. Independent yaw and pitch sensitivities convert normalized targets into desired ship
- *    angular velocities, tracked via controlled angular acceleration and damping.
+ * The active mouse-alignment path keeps an unbounded Pointer Lock virtual mouse in CSS pixels,
+ * controls a real cannon ray in ship-local space, and converts that ray through the active chase
+ * camera after its interpolation step. Legacy direct and virtual-joystick modes remain isolated
+ * below for compatibility, but neither contributes to the active projection-based control loop.
  */
 export class FlightController {
   public readonly position = new THREE.Vector3(0, 12, 40);
@@ -253,6 +261,30 @@ export class FlightController {
     targetPitchRate: 0,
   };
 
+  /**
+   * `virtualMouse` (V): accumulated Pointer Lock movement in viewport CSS px from center.
+   * It is unbounded, never reset at the boundary, and never moved by the camera.
+   */
+  public readonly virtualMouse = { x: 0, y: 0 };
+
+  /**
+   * Legacy diagnostic state retained for integrations that inspect it. In mouse-alignment mode
+   * it mirrors the real, camera-projected cannon reticle rather than a synthetic screen cursor.
+   */
+  public readonly reticleTrue = { x: 0, y: 0 };
+
+  /**
+   * `steeringError` is the bounded aim-region error between the virtual mouse's requested
+   * direction and the real projected cannon ray. V itself remains unbounded for its indicator;
+   * clamping is used only to turn an off-region point into the aim region's reachable direction.
+   */
+  public readonly steeringError = { x: 0, y: 0, magnitude: 0, normalized: 0 };
+
+  /** Cannon ray in ship-local space. Its world direction changes only through actual ship rotation. */
+  private readonly aimDirectionLocal = new THREE.Vector3(0, 0, -1);
+  private lastAimCamera: THREE.PerspectiveCamera | null = null;
+  private aimProjectionInitialized = false;
+
   // Bounded virtual reticle displacement in viewport CSS pixels (centered at 0, 0)
   public joystickX = 0;
   public joystickY = 0;
@@ -267,10 +299,11 @@ export class FlightController {
   // Live viewport-relative rounded-rectangle boundary, clamp, and response state (zero per-frame allocs)
   public readonly aimBoundary: RoundedRectBoundary = createRoundedRectBoundary();
   public readonly aimClamp: RoundedRectClampResult = createRoundedRectClampResult();
+  private readonly virtualMouseClamp: RoundedRectClampResult = createRoundedRectClampResult();
   public readonly joystickEval: VirtualJoystickEvaluation = createVirtualJoystickEvaluation();
   public readonly directMouseEval: DirectMouseEvaluation = createDirectMouseEvaluation();
 
-  /** Active steering mode (defaults to calibrated direct-nonlinear; switchable for baseline rollback) */
+  /** Active steering mode (defaults to projection-based mouse alignment; switchable for legacy rollback) */
   public steeringMode: SteeringMode = STEERING_CONFIG.steeringMode;
 
   private readonly directCurveParams: DirectMouseCurveParams = {
@@ -312,6 +345,14 @@ export class FlightController {
   }
 
   public centerAimCursor(): void {
+    this.virtualMouse.x = 0;
+    this.virtualMouse.y = 0;
+    this.reticleTrue.x = 0;
+    this.reticleTrue.y = 0;
+    this.steeringError.x = 0;
+    this.steeringError.y = 0;
+    this.steeringError.magnitude = 0;
+    this.steeringError.normalized = 0;
     this.mouseDelta.x = 0;
     this.mouseDelta.y = 0;
     this.reticlePosition.x = 0;
@@ -320,6 +361,8 @@ export class FlightController {
     this.reticlePosition.normalizedY = 0;
     this.reticlePosition.screenX = 0.5;
     this.reticlePosition.screenY = 0.5;
+    this.aimDirectionLocal.set(0, 0, -1);
+    this.aimProjectionInitialized = false;
     this.steeringDemand.yaw = 0;
     this.steeringDemand.pitch = 0;
     this.steeringDemand.targetYawRate = 0;
@@ -381,6 +424,12 @@ export class FlightController {
    * In `virtual-joystick-baseline` mode, preserves the baseline gimbal convergence offset.
    */
   public getAimDirectionWorld(out: THREE.Vector3): THREE.Vector3 {
+    if (this.steeringMode === 'mouse-alignment') {
+      // This is the same physical ray that `syncAimProjection` projects for the HUD. There is
+      // deliberately no fixed-FOV screen approximation in the firing path.
+      out.copy(this.aimDirectionLocal).applyQuaternion(this.quaternion).normalize();
+      return out;
+    }
     if (this.steeringMode === 'direct-nonlinear') {
       out.copy(_FORWARD_LOCAL).applyQuaternion(this.quaternion).normalize();
       return out;
@@ -390,6 +439,140 @@ export class FlightController {
     _gimbalDirLocal.set(Math.sin(gimbalYaw), Math.sin(gimbalPitch), -1).normalize();
     out.copy(_gimbalDirLocal).applyQuaternion(this.quaternion).normalize();
     return out;
+  }
+
+  /** Publishes a bounded real aim projection and keeps all legacy HUD fields in sync. */
+  private publishAimScreen(offsetX: number, offsetY: number): void {
+    clampToRoundedRect(offsetX, offsetY, this.aimBoundary, this.aimClamp);
+    const clampedX = this.aimClamp.clampedX;
+    const clampedY = this.aimClamp.clampedY;
+    this.reticleTrue.x = clampedX;
+    this.reticleTrue.y = clampedY;
+    this.joystickX = clampedX;
+    this.joystickY = clampedY;
+    this.aimCursorX = this.aimClamp.normalizedX;
+    this.aimCursorY = this.aimClamp.normalizedY;
+    this.reticlePosition.x = clampedX;
+    this.reticlePosition.y = clampedY;
+    this.reticlePosition.normalizedX = this.aimClamp.normalizedX;
+    this.reticlePosition.normalizedY = this.aimClamp.normalizedY;
+    this.reticlePosition.screenX = this.aimClamp.screenX;
+    this.reticlePosition.screenY = this.aimClamp.screenY;
+  }
+
+  /**
+   * Recalculates the reachable screen-space alignment error. It never modifies V, never moves
+   * the reticle visually, and never performs a threshold reset. Off-region virtual mouse
+   * positions are projected onto the aim boundary only for the steering comparison: the boundary
+   * point preserves their requested direction, while retaining an attainable zero-error state.
+   */
+  private updateAlignmentState(vh: number): void {
+    const V = this.virtualMouse;
+    clampToRoundedRect(V.x, V.y, this.aimBoundary, this.virtualMouseClamp);
+    const ex = this.virtualMouseClamp.clampedX - this.reticlePosition.x;
+    const ey = this.virtualMouseClamp.clampedY - this.reticlePosition.y;
+    const mag = Math.hypot(ex, ey);
+    const dz = Math.max(0, MA.alignmentErrorDeadzonePx);
+    const softMag = mag > 1e-9 ? (mag * mag) / (mag + dz) : 0;
+    this.steeringError.x = ex;
+    this.steeringError.y = ey;
+    this.steeringError.magnitude = mag;
+    this.steeringError.normalized = softMag / Math.max(1, MA.alignmentReferenceFraction * vh);
+  }
+
+  /**
+   * Converts a CSS-pixel aim position into a physical cannon direction using the exact active
+   * PerspectiveCamera matrices. The target originates on the camera ray but the final direction
+   * originates at the ship, preserving the chase-camera offset and weapon convergence geometry.
+   */
+  private setAimDirectionFromScreen(
+    camera: THREE.PerspectiveCamera,
+    offsetX: number,
+    offsetY: number,
+  ): void {
+    const vw = Math.max(1, this.lastViewportWidth || this.aimBoundary.viewportWidth);
+    const vh = Math.max(1, this.lastViewportHeight || this.aimBoundary.viewportHeight);
+    const screenX = 0.5 + offsetX / vw;
+    const screenY = 0.5 + offsetY / vh;
+
+    camera.updateMatrixWorld();
+    _cameraNdcPoint.set(screenX * 2 - 1, 1 - screenY * 2, 0.5).unproject(camera);
+    _cameraRayDirection.subVectors(_cameraNdcPoint, camera.position).normalize();
+
+    // Intersect the camera ray with the weapon-convergence sphere around the ship. Projecting
+    // `ship + aimDirection * projectionDistance` later therefore lands at this exact screen
+    // coordinate even though the third-person camera is offset from the weapon origin.
+    _aimProjectionPoint.copy(camera.position).sub(this.position);
+    const b = _aimProjectionPoint.dot(_cameraRayDirection);
+    const c = _aimProjectionPoint.lengthSq() - MA.projectionDistance * MA.projectionDistance;
+    const discriminant = b * b - c;
+    const distanceAlongCameraRay =
+      discriminant >= 0
+        ? Math.max(0, -b + Math.sqrt(discriminant))
+        : MA.projectionDistance;
+    _cameraRayPoint
+      .copy(camera.position)
+      .addScaledVector(_cameraRayDirection, distanceAlongCameraRay);
+    _aimDirectionWorld.subVectors(_cameraRayPoint, this.position).normalize();
+    _inverseShipQuaternion.copy(this.quaternion).invert();
+    this.aimDirectionLocal.copy(_aimDirectionWorld).applyQuaternion(_inverseShipQuaternion).normalize();
+  }
+
+  /**
+   * Projects the *same* cannon ray used by `getAimDirectionWorld` through the active camera.
+   * This must run after CameraController updates each frame so camera offset, chase interpolation,
+   * dynamic FOV, and camera rotation all participate in the one HUD coordinate system.
+   */
+  public syncAimProjection(
+    camera: THREE.PerspectiveCamera,
+    telemetry?: FlightTelemetry,
+    viewportWidth = this.lastViewportWidth || 1280,
+    viewportHeight = this.lastViewportHeight || 720,
+  ): void {
+    if (this.steeringMode !== 'mouse-alignment') return;
+
+    const vw = Math.max(1, viewportWidth);
+    const vh = Math.max(1, viewportHeight);
+    this.lastAimCamera = camera;
+    camera.updateMatrixWorld();
+
+    if (!this.aimProjectionInitialized) {
+      this.setAimDirectionFromScreen(camera, 0, 0);
+      this.aimProjectionInitialized = true;
+    }
+
+    this.getAimDirectionWorld(_aimDirectionWorld);
+    _aimProjectionPoint
+      .copy(this.position)
+      .addScaledVector(_aimDirectionWorld, MA.projectionDistance)
+      .project(camera);
+
+    const rawX = ((_aimProjectionPoint.x + 1) * 0.5 - 0.5) * vw;
+    const rawY = ((1 - _aimProjectionPoint.y) * 0.5 - 0.5) * vh;
+    clampToRoundedRect(rawX, rawY, this.aimBoundary, this.aimClamp);
+
+    // The bounded reticle is still a real ray: when chase lag would carry it outside the aim
+    // region, retarget the mounted cannon to the boundary ray instead of merely clamping artwork.
+    if (!this.aimClamp.inside) {
+      this.setAimDirectionFromScreen(camera, this.aimClamp.clampedX, this.aimClamp.clampedY);
+    }
+    this.publishAimScreen(this.aimClamp.clampedX, this.aimClamp.clampedY);
+    this.updateAlignmentState(vh);
+    this.updateAimTelemetry(telemetry, vw, vh);
+  }
+
+  private updateAimTelemetry(telemetry: FlightTelemetry | undefined, vw: number, vh: number): void {
+    if (!telemetry) return;
+    telemetry.aimNormalizedX = this.aimCursorX;
+    telemetry.aimNormalizedY = this.aimCursorY;
+    telemetry.aimScreenX = this.reticlePosition.screenX;
+    telemetry.aimScreenY = this.reticlePosition.screenY;
+    telemetry.virtualMouseScreenX = 0.5 + this.virtualMouse.x / vw;
+    telemetry.virtualMouseScreenY = 0.5 + this.virtualMouse.y / vh;
+    telemetry.alignmentErrorPx = this.steeringError.magnitude;
+    telemetry.aimBoundaryWidthPx = this.aimBoundary.widthPx;
+    telemetry.aimBoundaryHeightPx = this.aimBoundary.heightPx;
+    telemetry.aimBoundaryCornerRadiusPx = this.aimBoundary.cornerRadiusPx;
   }
 
   /**
@@ -412,6 +595,7 @@ export class FlightController {
     telemetry: FlightTelemetry,
     viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1280,
     viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 720,
+    activeCamera?: THREE.PerspectiveCamera,
   ): void {
     const profile = this.ship.flight;
     const safeDt = Math.min(Math.max(dt, 0.0001), 0.05);
@@ -422,9 +606,13 @@ export class FlightController {
     if (this.lastViewportWidth > 0 && this.lastViewportHeight > 0) {
       if (vw !== this.lastViewportWidth) {
         this.joystickX *= vw / this.lastViewportWidth;
+        this.virtualMouse.x *= vw / this.lastViewportWidth;
+        this.reticleTrue.x *= vw / this.lastViewportWidth;
       }
       if (vh !== this.lastViewportHeight) {
         this.joystickY *= vh / this.lastViewportHeight;
+        this.virtualMouse.y *= vh / this.lastViewportHeight;
+        this.reticleTrue.y *= vh / this.lastViewportHeight;
       }
     }
     this.lastViewportWidth = vw;
@@ -466,7 +654,114 @@ export class FlightController {
     if (input.keyPitchUp) keyPitch += 1;
     if (input.keyPitchDown) keyPitch -= 1;
 
-    if (this.steeringMode === 'direct-nonlinear') {
+    if (this.steeringMode === 'mouse-alignment') {
+      // ---- Mouse-to-Reticle Alignment ----
+      const yawClassScale = profile.yawSpeed / STEERING_CONFIG.referenceInterceptorYawSpeed;
+      const pitchClassScale = profile.pitchSpeed / STEERING_CONFIG.referenceInterceptorPitchSpeed;
+      const maxYaw =
+        THREE.MathUtils.clamp(
+          settings.maxYawRate,
+          STEERING_BOUNDS.maxYawRate.min,
+          STEERING_BOUNDS.maxYawRate.max,
+        ) *
+        yawClassScale *
+        THREE.MathUtils.clamp(settings.yawSensitivity, 0.4, 1.8);
+      const maxPitch =
+        THREE.MathUtils.clamp(
+          settings.maxPitchRate,
+          STEERING_BOUNDS.maxPitchRate.min,
+          STEERING_BOUNDS.maxPitchRate.max,
+        ) *
+        pitchClassScale *
+        THREE.MathUtils.clamp(settings.pitchSensitivity, 0.4, 1.8);
+      const mouseSens = THREE.MathUtils.clamp(
+        settings.mouseSensitivity,
+        STEERING_BOUNDS.mouseSensitivity.min,
+        STEERING_BOUNDS.mouseSensitivity.max,
+      );
+      const ySign = settings.invertY ? -1 : 1;
+
+      // 1. Accumulate raw Pointer Lock movement into V in CSS pixels. Pointer Lock already
+      // reports relative CSS-pixel deltas; viewport scaling here would make the virtual mouse lie.
+      const dMx = this.mouseDelta.x * mouseSens;
+      const dMy = this.mouseDelta.y * ySign * mouseSens;
+      this.virtualMouse.x += dMx;
+      this.virtualMouse.y += dMy;
+
+      // 2. Mouse moves the *physical cannon ray* while it is inside the aim region. The input
+      // gain leaves room for genuine ship rotation to continue moving the projected reticle as
+      // V crosses the boundary. No visual-only smoothing and no V/T reset occurs here.
+      const aimCamera = activeCamera ?? this.lastAimCamera;
+      if (aimCamera) {
+        if (!this.aimProjectionInitialized) {
+          this.syncAimProjection(aimCamera, undefined, vw, vh);
+        }
+        const candidateX = this.reticlePosition.x + dMx * MA.reticleInputGain;
+        const candidateY = this.reticlePosition.y + dMy * MA.reticleInputGain;
+        clampToRoundedRect(candidateX, candidateY, this.aimBoundary, this.aimClamp);
+        this.setAimDirectionFromScreen(aimCamera, this.aimClamp.clampedX, this.aimClamp.clampedY);
+        this.publishAimScreen(this.aimClamp.clampedX, this.aimClamp.clampedY);
+      } else {
+        // Headless callers retain a deterministic bounded presentation until they provide a
+        // PerspectiveCamera. Browser gameplay always follows the projection path above.
+        this.publishAimScreen(
+          this.reticlePosition.x + dMx * MA.reticleInputGain,
+          this.reticlePosition.y + dMy * MA.reticleInputGain,
+        );
+      }
+      this.updateAlignmentState(vh);
+
+      // 3. Demand: smooth progressive curve of overshoot, continuous from zero at boundary
+      const n = this.steeringError.normalized; // already passed through the soft deadzone
+      const s = Math.tanh(n * (MA.alignmentLinearGain + MA.alignmentQuadGain * n));
+      const mag = this.steeringError.magnitude;
+      const ex = mag > 1e-6 ? this.steeringError.x / mag : 0;
+      const ey = mag > 1e-6 ? this.steeringError.y / mag : 0;
+      // Mouse right (+x) => nose right => negative yaw about +Y; mouse down (+y) => nose down
+      let targetYawRate = -ex * s * maxYaw;
+      let targetPitchRate = -ey * s * maxPitch;
+      targetYawRate = THREE.MathUtils.clamp(targetYawRate - keyYaw * maxYaw * 0.65, -maxYaw, maxYaw);
+      targetPitchRate = THREE.MathUtils.clamp(
+        targetPitchRate + keyPitch * maxPitch * 0.65,
+        -maxPitch,
+        maxPitch,
+      );
+
+      this.steeringDemand.yaw = THREE.MathUtils.clamp(targetYawRate / Math.max(maxYaw, 0.1), -1, 1);
+      this.steeringDemand.pitch = THREE.MathUtils.clamp(
+        targetPitchRate / Math.max(maxPitch, 0.1),
+        -1,
+        1,
+      );
+      this.steeringDemand.targetYawRate = targetYawRate;
+      this.steeringDemand.targetPitchRate = targetPitchRate;
+
+      // 4. First-order smoothing (dt-based, no spikes, symmetric on reversal)
+      const a = 1 - Math.exp(-safeDt / MA.alignmentRateTauSec);
+      this.yawVelocity += (targetYawRate - this.yawVelocity) * a;
+      this.pitchVelocity += (targetPitchRate - this.pitchVelocity) * a;
+      if (targetYawRate === 0 && Math.abs(this.yawVelocity) < 1e-4) this.yawVelocity = 0;
+      if (targetPitchRate === 0 && Math.abs(this.pitchVelocity) < 1e-4) this.pitchVelocity = 0;
+
+      const reticleRadius = Math.hypot(this.reticlePosition.x, this.reticlePosition.y);
+      const reticleBoundaryRadius =
+        reticleRadius > 1e-6
+          ? computeRoundedRectRayRadius(
+              this.reticlePosition.x / reticleRadius,
+              this.reticlePosition.y / reticleRadius,
+              this.aimBoundary,
+            )
+          : 1;
+      this.joystickEval.radialMagnitude = THREE.MathUtils.clamp(
+        reticleRadius / Math.max(reticleBoundaryRadius, 1e-6),
+        0,
+        1,
+      );
+      this.joystickEval.steeringMagnitude = s;
+      this.joystickEval.steerX = -this.steeringDemand.yaw;
+      this.joystickEval.steerY = -this.steeringDemand.pitch;
+      this.joystickEval.zone = n <= 0.01 ? 'deadzone' : s > 0.95 ? 'max' : 'active';
+    } else if (this.steeringMode === 'direct-nonlinear') {
       // 2. Continuous Steering Demand (computed directly from raw `mouseDelta`, completely independent of `reticlePosition`)
       const yawClassScale = profile.yawSpeed / STEERING_CONFIG.referenceInterceptorYawSpeed;
       const pitchClassScale = profile.pitchSpeed / STEERING_CONFIG.referenceInterceptorPitchSpeed;
@@ -730,6 +1025,21 @@ export class FlightController {
     this.quaternion.multiply(_qRoll);
     this.quaternion.normalize();
 
+    // Mouse-alignment uses a physical cannon gimbal, not a visual reticle spring. The gimbal
+    // advances by the genuine yaw/pitch rotation that was just applied to the airframe. A chase
+    // camera otherwise follows the hull closely enough to cancel most of the hull-only screen
+    // motion; this equal-and-same-sense gimbal step makes the *firing ray* visibly and correctly
+    // traverse the screen toward V. `syncAimProjection` subsequently projects this exact ray
+    // through the completed camera and clamps the physical ray (never the artwork alone).
+    if (this.steeringMode === 'mouse-alignment') {
+      _qAimGimbalYaw.setFromAxisAngle(_AXIS_Y, stepYaw * MA.gimbalRotationGain);
+      _qAimGimbalPitch.setFromAxisAngle(_AXIS_X, stepPitch * MA.gimbalRotationGain);
+      this.aimDirectionLocal
+        .applyQuaternion(_qAimGimbalYaw)
+        .applyQuaternion(_qAimGimbalPitch)
+        .normalize();
+    }
+
     // Subtle visual bank when yawing without overriding deliberate A/D roll
     const targetBank = THREE.MathUtils.clamp(
       (this.yawVelocity / profile.yawSpeed) * profile.visualBankStrength,
@@ -864,6 +1174,9 @@ export class FlightController {
     telemetry.aimNormalizedY = this.aimCursorY;
     telemetry.aimScreenX = this.aimClamp.screenX;
     telemetry.aimScreenY = this.aimClamp.screenY;
+    telemetry.virtualMouseScreenX = 0.5 + this.virtualMouse.x / vw;
+    telemetry.virtualMouseScreenY = 0.5 + this.virtualMouse.y / vh;
+    telemetry.alignmentErrorPx = this.steeringMode === 'mouse-alignment' ? this.steeringError.magnitude : 0;
     telemetry.aimBoundaryWidthPx = this.aimBoundary.widthPx;
     telemetry.aimBoundaryHeightPx = this.aimBoundary.heightPx;
     telemetry.aimBoundaryCornerRadiusPx = this.aimBoundary.cornerRadiusPx;

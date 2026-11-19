@@ -678,7 +678,7 @@ export class CombatManager {
   }
 
   /**
-   * Projects true 3D weapon aiming point, ship boresight, and all active enemy markers
+   * Projects the true 3D weapon aiming point and all active enemy markers
    * into normalized [0..1] viewport coordinates so HUD matches 3D ballistics 1:1.
    */
   private projectHudTelemetry(
@@ -686,8 +686,8 @@ export class CombatManager {
     camera: THREE.PerspectiveCamera,
     telemetry: FlightTelemetry,
   ): void {
-    // 1. Project true 3D cannon convergence / ship boresight point onto viewport
-    //    (Do NOT overwrite telemetry.aimScreenX/Y — those hold the persistent virtual mouse cursor!)
+    // 1. Project the true 3D cannon convergence point onto the viewport. `aimScreenX/Y`
+    //    already carry this same cannon ray from FlightController's active-camera projection.
     flight.getAimTargetPoint(_aimTarget, this.playerWeapon.convergenceDistance);
     _projVec.copy(_aimTarget).project(camera);
     telemetry.boresightScreenX = THREE.MathUtils.clamp((_projVec.x + 1) * 0.5, 0.05, 0.95);
@@ -748,7 +748,7 @@ export class CombatManager {
       marker.healthRatio = getHealthRatio(enemy.health);
       marker.isPriorityTarget = Boolean(enemy.isPriorityTarget);
 
-      // Rank best target near player's 3D cannon boresight
+      // Rank best target near the player's active 3D cannon ray.
       if (inFront) {
         const aimDist = Math.hypot(sx - telemetry.boresightScreenX, sy - telemetry.boresightScreenY);
         const weightedScore = aimDist + dist * 0.00035;

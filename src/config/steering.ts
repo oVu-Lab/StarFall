@@ -11,7 +11,42 @@
  * remains strictly independent of the mouse response curve.
  */
 
-export type SteeringMode = 'direct-nonlinear' | 'virtual-joystick-baseline';
+export type SteeringMode = 'mouse-alignment' | 'direct-nonlinear' | 'virtual-joystick-baseline';
+
+/**
+ * Mouse-to-Reticle Alignment steering model (active default).
+ *
+ *   V  virtualMousePosition: accumulated movementX/Y (CSS px from viewport center). Never
+ *      clamped, reset, or modified by camera movement.
+ *   R  aim reticle: the active cannon ray projected through the active chase camera. It is a
+ *      real 3D direction, not a visual interpolation proxy, and is constrained by the aim region.
+ *   e  steeringError = clampToAimRegion(V) - R in the same CSS-pixel screen plane. V itself is
+ *      kept unbounded; its boundary projection supplies a reachable directional target.
+ *   The ray is mounted in ship local space, so genuine ship rotation changes R; FlightController
+ *   then reprojects it through the camera after its chase interpolation has completed.
+ *   d(m) = m^2 / (m + deadzonePx)  smooth soft deadzone (C-inf, no cutoff)
+ *   n = d(|e|) / (alignmentReferenceFraction * viewportHeight)
+ *   s(n) = tanh(n * (alignmentLinearGain + alignmentQuadGain * n))
+ *   target rate = maxRate * s(n) * e/|e|
+ */
+export const MOUSE_ALIGNMENT_CONFIG = {
+  /** Fraction of physical Pointer Lock motion immediately applied to the cannon reticle. */
+  reticleInputGain: 0.12,
+  /** Fraction of each real airframe yaw/pitch step transferred into the physical cannon gimbal. */
+  gimbalRotationGain: 0.06,
+  /** Distance used for camera-to-weapon screen-ray conversion; matches player cannon convergence. */
+  projectionDistance: 240,
+  /** Overshoot distance (fraction of viewport height) that maps to n = 1 */
+  alignmentReferenceFraction: 0.26,
+  /** Soft error deadzone (px): errors well below this produce almost no steering, smoothly */
+  alignmentErrorDeadzonePx: 0.5,
+  /** s'(0): slope of the demand curve at the boundary (precise, continuous onset) */
+  alignmentLinearGain: 1.0,
+  /** Extra quadratic growth of demand with distance (progressive strength) */
+  alignmentQuadGain: 0.9,
+  /** First-order rate smoothing time constant (s) */
+  alignmentRateTauSec: 0.045,
+} as const;
 
 /**
  * Exact pre-calibration baseline preserved for independent rollback.
@@ -115,7 +150,7 @@ export const STEERING_CONFIG = {
   joystickRadius: BASELINE_STEERING_CONFIG.joystickRadius,
 
   // Active direct nonlinear steering calibration
-  steeringMode: DIRECT_MOUSE_STEERING_CONFIG.steeringMode,
+  steeringMode: 'mouse-alignment' as SteeringMode,
   inputNormalizationRange: DIRECT_MOUSE_STEERING_CONFIG.inputNormalizationRange,
   mouseSensitivity: DIRECT_MOUSE_STEERING_CONFIG.mouseSensitivity,
   responseCurve: DIRECT_MOUSE_STEERING_CONFIG.responseCurve,

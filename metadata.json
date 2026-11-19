@@ -1,6 +1,1 @@
-{
-  "name": "STARFALL",
-  "description": "Cinematic 3D sci-fi arcade space fighter combat game with responsive six-degree-of-freedom flight controls.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
+{"name":"STARFALL","description":"Cinematic 3D sci-fi arcade space fighter combat game with responsive six-degree-of-freedom flight controls.","requestFramePermissions":[],"majorCapabilities":["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]}

@@ -203,7 +203,7 @@ export function GameScene({
       const playerAlive = !combat.playerHealth.isDestroyed;
 
       if (playerAlive) {
-        flight.update(dt, snapshot, settings, telemetry);
+        flight.update(dt, snapshot, settings, telemetry, state.size.width, state.size.height, camera instanceof THREE.PerspectiveCamera ? camera : undefined);
 
         if (flight.getBoostJustEngaged()) {
           AudioManager.playBoostEngage();
@@ -222,6 +222,11 @@ export function GameScene({
           combat.getCameraImpulse(),
         );
         camera.updateMatrixWorld();
+
+        // The reticle is the actual cannon ray projected through this completed chase-camera
+        // frame. Keep this between camera motion and combat so the HUD, target ranking, and
+        // firing ray all share one projection model.
+        flight.syncAimProjection(camera, telemetry, state.size.width, state.size.height);
       }
 
       // Advance combat simulation (weapons, projectiles, AI, collisions, HUD projections)

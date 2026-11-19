@@ -64,14 +64,14 @@ export function FlightHUD({
 
   // Combat & aiming refs
   const aimReticleRef = useRef<HTMLDivElement>(null);
-  const aimRingRef = useRef<HTMLDivElement>(null);
   const aimBoundarySvgRef = useRef<SVGSVGElement>(null);
   const cornerPathRefs = useRef<Array<SVGPathElement | null>>([null, null, null, null]);
   const deadzoneRectRef = useRef<SVGRectElement>(null);
   const lastBoundaryKeyRef = useRef('');
   const boundaryScratchRef = useRef(createRoundedRectBoundary());
-  const boresightRef = useRef<HTMLDivElement>(null);
   const steerLineRef = useRef<SVGLineElement>(null);
+  const virtualMouseRef = useRef<HTMLDivElement>(null);
+  const virtualMouseArrowRef = useRef<SVGPathElement>(null);
   const hitMarkerRef = useRef<HTMLDivElement>(null);
   const killMarkerRef = useRef<HTMLDivElement>(null);
   const damageVignetteRef = useRef<HTMLDivElement>(null);
@@ -210,12 +210,10 @@ export function FlightHUD({
             : 'Boost Energy';
       }
 
-      // 4. Bounded Virtual Joystick Reticle (30% x 35% rounded-rectangle boundary)
-      //    + 3D Cannon Boresight Reticle + Radial Steering Vector Tether
+      // 4. Actual cannon aim reticle: a camera-projected weapon ray bounded by the central
+      //    aim region. `virtualMouse*` remains a separate, unbounded Pointer Lock accumulator.
       const aimPxX = t.aimScreenX * vw;
       const aimPxY = t.aimScreenY * vh;
-      const borePxX = t.boresightScreenX * vw;
-      const borePxY = t.boresightScreenY * vh;
       const cx = vw * 0.5;
       const cy = vh * 0.5;
 
@@ -239,19 +237,6 @@ export function FlightHUD({
             : t.steeringZone === 'deadzone'
               ? 'rgba(148, 163, 184, 0.85)'
               : 'rgba(165, 243, 252, 0.95)';
-      }
-
-      if (boresightRef.current) {
-        const recoilScale = t.isFiring ? 1 + t.weaponCooldownRatio * 0.14 : 1;
-        boresightRef.current.style.transform = `translate3d(${borePxX.toFixed(1)}px, ${borePxY.toFixed(1)}px, 0) translate(-50%, -50%) scale(${recoilScale.toFixed(3)})`;
-      }
-
-      if (aimRingRef.current) {
-        const ringScale = 1 + t.boostIntensity * 0.24 + (t.isFiring ? 0.08 : 0);
-        aimRingRef.current.style.transform = `scale(${ringScale.toFixed(3)})`;
-        aimRingRef.current.style.opacity = String(
-          (0.24 + t.boostIntensity * 0.45 + (t.isFiring ? 0.22 : 0)).toFixed(2),
-        );
       }
 
       // Subtle sci-fi rounded-rectangle corner markings (30% x 35% base viewport geometry scaled by joystickRadius)
@@ -333,22 +318,47 @@ export function FlightHUD({
             : 'rgba(103, 232, 249, 0.78)';
       }
 
+      // Virtual Mouse Indicator: unconstrained V. Display-only edge clamp keeps it visible when
+      // V lies beyond the viewport; the tether then points at the clamped marker.
+      const vmRawX = t.virtualMouseScreenX * vw;
+      const vmRawY = t.virtualMouseScreenY * vh;
+      const edge = 14;
+      const vmPxX = Math.min(vw - edge, Math.max(edge, vmRawX));
+      const vmPxY = Math.min(vh - edge, Math.max(edge, vmRawY));
+      const vmOffscreen = vmPxX !== vmRawX || vmPxY !== vmRawY;
+      if (virtualMouseRef.current) {
+        virtualMouseRef.current.style.transform = `translate3d(${vmPxX.toFixed(1)}px, ${vmPxY.toFixed(1)}px, 0) translate(-50%, -50%)`;
+        virtualMouseRef.current.dataset.screenX = t.virtualMouseScreenX.toFixed(4);
+        virtualMouseRef.current.dataset.screenY = t.virtualMouseScreenY.toFixed(4);
+        virtualMouseRef.current.dataset.offscreen = vmOffscreen ? '1' : '0';
+        virtualMouseRef.current.style.opacity = vmOffscreen ? '0.6' : '0.95';
+      }
+      if (virtualMouseArrowRef.current) {
+        const arrowAngle = Math.atan2(vmRawY - cy, vmRawX - cx) * (180 / Math.PI) + 90;
+        virtualMouseArrowRef.current.style.display = vmOffscreen ? 'block' : 'none';
+        virtualMouseArrowRef.current.setAttribute('transform', `rotate(${arrowAngle.toFixed(1)} 9 9)`);
+      }
+
+      // Alignment tether (aim reticle -> virtual mouse indicator), faded when they are close
       if (steerLineRef.current) {
-        const dx = aimPxX - cx;
-        const dy = aimPxY - cy;
+        const dx = vmPxX - aimPxX;
+        const dy = vmPxY - aimPxY;
         const distPx = Math.hypot(dx, dy);
-        if (t.steeringZone !== 'deadzone' && distPx > 12) {
+        const fade = Math.min(1, Math.max(0, (distPx - 14) / 30));
+        if (fade > 0.001) {
           const ux = dx / distPx;
           const uy = dy / distPx;
-          steerLineRef.current.setAttribute('x1', (cx + ux * 10).toFixed(1));
-          steerLineRef.current.setAttribute('y1', (cy + uy * 10).toFixed(1));
-          steerLineRef.current.setAttribute('x2', (aimPxX - ux * 18).toFixed(1));
-          steerLineRef.current.setAttribute('y2', (aimPxY - uy * 18).toFixed(1));
-          steerLineRef.current.style.opacity = String(
-            Math.min(0.46, 0.12 + t.joystickRadialMagnitude * 0.34).toFixed(2),
-          );
+          steerLineRef.current.setAttribute('x1', (aimPxX + ux * 16).toFixed(1));
+          steerLineRef.current.setAttribute('y1', (aimPxY + uy * 16).toFixed(1));
+          steerLineRef.current.setAttribute('x2', (vmPxX - ux * 9).toFixed(1));
+          steerLineRef.current.setAttribute('y2', (vmPxY - uy * 9).toFixed(1));
+          steerLineRef.current.style.opacity = (fade * 0.5).toFixed(2);
+          steerLineRef.current.dataset.alignmentErrorPx = t.alignmentErrorPx.toFixed(1);
+          steerLineRef.current.dataset.clipped = vmOffscreen ? '1' : '0';
         } else {
           steerLineRef.current.style.opacity = '0';
+          steerLineRef.current.dataset.alignmentErrorPx = t.alignmentErrorPx.toFixed(1);
+          steerLineRef.current.dataset.clipped = '0';
         }
       }
 
@@ -588,7 +598,7 @@ export function FlightHUD({
         />
       </svg>
 
-      {/* Subtle Steering Vector Tether (Screen Center -> Persistent Virtual Mouse Cursor) */}
+      {/* Alignment Tether (Aim Reticle -> Virtual Mouse Indicator); fades when they are close */}
       <svg
         className="pointer-events-none fixed inset-0 h-full w-full"
         aria-hidden="true"
@@ -599,66 +609,36 @@ export function FlightHUD({
           y1="0"
           x2="0"
           y2="0"
-          stroke="#67e8f9"
-          strokeWidth="1.25"
-          strokeDasharray="4 4"
+          stroke="#fcd34d"
+          strokeWidth="1.1"
+          strokeDasharray="3 4"
           style={{ opacity: 0 }}
         />
       </svg>
 
-      {/* Ship 3D Cannon Boresight Reticle (Convergence Point + Hit/Kill Feedback) */}
+      {/* Virtual Mouse Indicator: accumulated Pointer Lock position; may leave the aim boundary */}
       <div
-        ref={boresightRef}
-        className="pointer-events-none fixed left-0 top-0 flex items-center justify-center"
+        ref={virtualMouseRef}
+        data-testid="virtual-mouse-indicator"
+        className="pointer-events-none fixed left-0 top-0 flex items-center justify-center text-amber-200"
         style={{ transform: 'translate3d(50vw, 50vh, 0) translate(-50%, -50%)', willChange: 'transform' }}
       >
-        <div
-          ref={aimRingRef}
-          className="absolute h-14 w-14 rounded-full border border-cyan-400/45 opacity-25"
-          style={{ willChange: 'transform, opacity' }}
-        />
-
-        <svg width="34" height="34" viewBox="0 0 34 34" className="text-cyan-300/75">
-          <line x1="17" y1="3" x2="17" y2="9" stroke="currentColor" strokeWidth="1.4" />
-          <line x1="17" y1="25" x2="17" y2="31" stroke="currentColor" strokeWidth="1.4" />
-          <line x1="3" y1="17" x2="9" y2="17" stroke="currentColor" strokeWidth="1.4" />
-          <line x1="25" y1="17" x2="31" y2="17" stroke="currentColor" strokeWidth="1.4" />
-          <circle cx="17" cy="17" r="1.8" fill="#bae6fd" />
+        <svg width="18" height="18" viewBox="0 0 18 18">
+          <path d="M9 1.5 L16.5 9 L9 16.5 L1.5 9 Z" fill="rgba(251,191,36,0.18)" stroke="currentColor" strokeWidth="1.4" />
+          <circle cx="9" cy="9" r="1.2" fill="currentColor" />
+          <path
+            ref={virtualMouseArrowRef}
+            d="M9 0.8 L12.2 5.7 L9 4.5 L5.8 5.7 Z"
+            fill="currentColor"
+            style={{ display: 'none' }}
+          />
         </svg>
-
-        {/* Hit Confirmation X */}
-        <div
-          ref={hitMarkerRef}
-          className="absolute opacity-0"
-          style={{ willChange: 'opacity' }}
-        >
-          <svg width="34" height="34" viewBox="0 0 34 34" className="text-cyan-200">
-            <line x1="7" y1="7" x2="13" y2="13" stroke="currentColor" strokeWidth="2.2" />
-            <line x1="27" y1="7" x2="21" y2="13" stroke="currentColor" strokeWidth="2.2" />
-            <line x1="7" y1="27" x2="13" y2="21" stroke="currentColor" strokeWidth="2.2" />
-            <line x1="27" y1="27" x2="21" y2="21" stroke="currentColor" strokeWidth="2.2" />
-          </svg>
-        </div>
-
-        {/* Kill Confirmation Burst */}
-        <div
-          ref={killMarkerRef}
-          className="absolute opacity-0"
-          style={{ willChange: 'opacity' }}
-        >
-          <svg width="52" height="52" viewBox="0 0 52 52" className="text-orange-400">
-            <line x1="10" y1="10" x2="19" y2="19" stroke="currentColor" strokeWidth="2.5" />
-            <line x1="42" y1="10" x2="33" y2="19" stroke="currentColor" strokeWidth="2.5" />
-            <line x1="10" y1="42" x2="19" y2="33" stroke="currentColor" strokeWidth="2.5" />
-            <line x1="42" y1="42" x2="33" y2="33" stroke="currentColor" strokeWidth="2.5" />
-          </svg>
-        </div>
       </div>
 
-      {/* Persistent Virtual Mouse Steering Cursor (Progressive 3-Zone Envelope) */}
+      {/* Aim Reticle: current aiming direction, constrained to the aim boundary */}
       <div
         ref={aimReticleRef}
-        data-testid="virtual-mouse-cursor"
+        data-testid="aim-reticle"
         className="pointer-events-none fixed left-0 top-0 flex items-center justify-center text-cyan-200/95"
         style={{ transform: 'translate3d(50vw, 50vh, 0) translate(-50%, -50%)', willChange: 'transform' }}
       >
@@ -670,6 +650,22 @@ export function FlightHUD({
           <line x1="35" y1="23" x2="42" y2="23" stroke="currentColor" strokeWidth="1.6" />
           <circle cx="23" cy="23" r="2.4" fill="#e0f2fe" />
         </svg>
+        <div ref={hitMarkerRef} className="absolute opacity-0" style={{ willChange: 'opacity' }}>
+          <svg width="34" height="34" viewBox="0 0 34 34" className="text-cyan-100">
+            <line x1="7" y1="7" x2="13" y2="13" stroke="currentColor" strokeWidth="2.2" />
+            <line x1="27" y1="7" x2="21" y2="13" stroke="currentColor" strokeWidth="2.2" />
+            <line x1="7" y1="27" x2="13" y2="21" stroke="currentColor" strokeWidth="2.2" />
+            <line x1="27" y1="27" x2="21" y2="21" stroke="currentColor" strokeWidth="2.2" />
+          </svg>
+        </div>
+        <div ref={killMarkerRef} className="absolute opacity-0" style={{ willChange: 'opacity' }}>
+          <svg width="52" height="52" viewBox="0 0 52 52" className="text-orange-400">
+            <line x1="10" y1="10" x2="19" y2="19" stroke="currentColor" strokeWidth="2.5" />
+            <line x1="42" y1="10" x2="33" y2="19" stroke="currentColor" strokeWidth="2.5" />
+            <line x1="10" y1="42" x2="19" y2="33" stroke="currentColor" strokeWidth="2.5" />
+            <line x1="42" y1="42" x2="33" y2="33" stroke="currentColor" strokeWidth="2.5" />
+          </svg>
+        </div>
       </div>
 
       {/* Top Row: Attitude & Combat Strip + Center Target Card + Right Pause & Mission Objectives */}

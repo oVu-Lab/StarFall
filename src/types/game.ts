@@ -154,9 +154,14 @@ export interface FlightTelemetry {
   /** Normalized virtual joystick deflection (-1..1 inside rounded-rectangle boundary) */
   aimNormalizedX: number;
   aimNormalizedY: number;
-  /** Screen-space [0..1] position of bounded virtual joystick reticle */
+  /** Screen-space [0..1] position of the boundary-constrained AIM RETICLE */
   aimScreenX: number;
   aimScreenY: number;
+  /** Screen-space [0..1] position of the unconstrained VIRTUAL MOUSE (may lie outside [0..1]) */
+  virtualMouseScreenX: number;
+  virtualMouseScreenY: number;
+  /** Reachable reticle alignment error in viewport CSS px (virtual mouse direction vs projected cannon ray) */
+  alignmentErrorPx: number;
   /** Live rounded-rectangle boundary geometry in game viewport CSS pixels */
   aimBoundaryWidthPx: number;
   aimBoundaryHeightPx: number;
@@ -166,7 +171,7 @@ export interface FlightTelemetry {
   /** Shaped normalized steering target outputs after deadzone & response curve (-1..1) */
   steeringOutputX: number;
   steeringOutputY: number;
-  /** Screen-space [0..1] position of ship boresight */
+  /** Screen-space [0..1] position of the active cannon ray; retained under its legacy telemetry key */
   boresightScreenX: number;
   boresightScreenY: number;
   /** Active virtual joystick region ('deadzone' | 'active' | 'max') */
