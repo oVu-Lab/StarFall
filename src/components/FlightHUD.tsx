@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { CheckCircle2, ChevronDown, ChevronUp, Circle, Pause } from 'lucide-react';
+import { TECH_EASE } from './ui/ObsidianUI';
 import { SHIP_CONFIGS } from '../config/ships';
 import { STEERING_CONFIG } from '../config/steering';
 import { computeRoundedRectBoundary, createRoundedRectBoundary } from '../engine/AimBoundary';
@@ -41,6 +43,7 @@ export function FlightHUD({
   onPause,
 }: FlightHUDProps) {
   const ship = SHIP_CONFIGS[shipId];
+  const reducedMotion = useReducedMotion();
 
   // Core flight refs
   const speedNumRef = useRef<HTMLSpanElement>(null);
@@ -202,8 +205,8 @@ export function FlightHUD({
         shieldBarRef.current.style.backgroundColor = t.shieldBroken ? '#fb7185' : shieldRatio <= 0.3 ? '#f59e0b' : '#22d3ee';
       }
       if (shieldStatusRef.current) {
-        shieldStatusRef.current.textContent = t.shieldBroken ? 'SHIELD BREAK' : t.shieldRecharging ? 'RECHARGING' : 'ONLINE';
-        shieldStatusRef.current.style.color = t.shieldBroken ? '#fb7185' : t.shieldRecharging ? '#67e8f9' : '#94a3b8';
+        shieldStatusRef.current.textContent = t.shieldBroken ? 'BREAK' : t.shieldRecharging ? 'CHG' : '';
+        shieldStatusRef.current.style.color = t.shieldBroken ? '#fb7185' : '#67e8f9';
       }
 
       if (weaponStatusRef.current) {
@@ -556,12 +559,23 @@ export function FlightHUD({
         aria-hidden="true"
       />
 
-      <div ref={missileWarningRef} className="pointer-events-none fixed right-72 top-20 border border-rose-400/70 bg-[#260811]/90 px-3 py-2 font-mono text-xs font-bold tracking-[0.18em] text-rose-200 shadow-[0_0_18px_rgba(244,63,94,0.35)]" style={{ opacity: 0, transition: 'opacity 100ms' }}>MISSILE WARNING</div>
-      <div ref={missileDirectionRef} className="pointer-events-none fixed left-0 top-0 text-rose-400" style={{ opacity: 0, willChange: 'transform,opacity' }} aria-label="Incoming missile direction"><svg width="30" height="30" viewBox="0 0 30 30"><path d="M15 2 L27 26 L15 21 L3 26 Z" fill="rgba(244,63,94,.18)" stroke="currentColor" strokeWidth="1.7"/></svg></div>
-      <div ref={lockPanelRef} className="pointer-events-none fixed bottom-6 left-1/2 w-60 -translate-x-1/2 border border-cyan-400/35 bg-[#040a18]/88 px-3 py-2 font-mono text-[10px] tracking-wider" style={{ opacity: 0.55 }}>
-        <div className="flex justify-between"><span ref={lockNameRef} className="text-slate-200">NO TARGET</span><span ref={missileAmmoRef} className="text-orange-200">4 · M</span></div>
-        <div className="mt-1.5 h-1 overflow-hidden bg-slate-800"><div ref={lockBarRef} className="h-full w-full origin-left bg-cyan-400" style={{ transform: 'scaleX(0)' }} /></div>
-        <div ref={lockStateRef} className="mt-1 text-center text-cyan-300">SEEKING TARGET</div>
+      {/* Incoming Missile Alert & Directional Indicator */}
+      <div
+        ref={missileWarningRef}
+        className="obsidian-hud pointer-events-none fixed left-1/2 top-16 z-30 -translate-x-1/2 border border-rose-500/80 px-4 py-1.5 font-mono text-[11px] font-bold tracking-[0.24em] text-rose-200 shadow-[0_0_24px_rgba(244,63,94,0.42)]"
+        style={{ opacity: 0, transition: 'opacity 120ms ease' }}
+      >
+        MISSILE INBOUND
+      </div>
+      <div
+        ref={missileDirectionRef}
+        className="pointer-events-none fixed left-0 top-0 text-rose-400"
+        style={{ opacity: 0, willChange: 'transform,opacity' }}
+        aria-label="Incoming missile direction"
+      >
+        <svg width="30" height="30" viewBox="0 0 30 30">
+          <path d="M15 2 L27 26 L15 21 L3 26 Z" fill="rgba(244,63,94,.2)" stroke="currentColor" strokeWidth="1.7" />
+        </svg>
       </div>
 
       {/* Pooled 3D Enemy Target Brackets & Health Bars */}
@@ -716,162 +730,139 @@ export function FlightHUD({
         </div>
       </div>
 
-      {/* Top Row: Attitude & Combat Strip + Center Target Card + Right Pause & Mission Objectives */}
+      {/* Top Edge: Minimal Combat Counter · Primary Target Bar · Compact Objectives & Pause */}
       <div className="flex items-start justify-between gap-4">
-        <div className="flex flex-col gap-2">
-          <div className="border border-cyan-400/20 bg-[#040a18]/82 px-4 py-2">
-            <div className="flex items-center gap-3.5 font-mono text-xs tabular-nums text-slate-300">
-              <span>
-                HDG <strong ref={headingRef} className="font-semibold text-cyan-300">000°</strong>
-              </span>
-              <span className="text-slate-600" aria-hidden="true">·</span>
-              <span>
-                PITCH <strong ref={pitchRef} className="font-semibold text-slate-100">+0°</strong>
-              </span>
-              <span className="text-slate-600" aria-hidden="true">·</span>
-              <span>
-                ROLL <strong ref={rollRef} className="font-semibold text-slate-100">+0°</strong>
-              </span>
-            </div>
-            <div className="mt-1.5 flex flex-wrap items-center gap-3 border-t border-slate-800/80 pt-1.5 font-mono text-[11px] tabular-nums text-slate-400">
-              <span>
-                Hostiles <strong ref={combatHostilesRef} className="text-orange-300">0</strong>
-              </span>
-              <span aria-hidden="true">·</span>
-              <span>
-                Kills <strong ref={combatKillsRef} className="text-cyan-300">0</strong>
-              </span>
-              <span aria-hidden="true">·</span>
-              <span>
-                Acc <strong ref={combatAccRef} className="text-slate-200">0%</strong>
-              </span>
-            </div>
-            {/* Development-only Performance Monitor (compiled out in production) */}
-            {import.meta.env.DEV && settings.showPerfOverlay && (
-              <div className="mt-1.5 border-t border-cyan-500/25 pt-1.5 font-mono text-[10px] tabular-nums text-cyan-300/90">
-                <div ref={perfLine1Ref}>60 FPS · 16.6 ms · 0 draws · 0.0k tris</div>
-                <div ref={perfLine2Ref} className="text-slate-400">
-                  E:0 · P:0 · VFX:0 · Assets:0 (0ms)
-                </div>
-              </div>
-            )}
+        {/* Top-Left: Ultra-compact Hostile / Kill Counter */}
+        <div className="flex flex-col gap-1.5">
+          <div className="obsidian-hud flex items-center gap-3 border-l-2 border-l-[#38bdf8] px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider tabular-nums text-slate-400">
+            <span>
+              HST <strong ref={combatHostilesRef} className="text-orange-300">0</strong>
+            </span>
+            <span className="text-slate-700" aria-hidden="true">/</span>
+            <span>
+              KIL <strong ref={combatKillsRef} className="text-[#38bdf8]">0</strong>
+            </span>
           </div>
+          {import.meta.env.DEV && settings.showPerfOverlay && (
+            <div className="obsidian-hud px-2.5 py-1 font-mono text-[9px] tabular-nums text-[#38bdf8]/90">
+              <div ref={perfLine1Ref}>60 FPS · 16.6 ms · 0 draws · 0.0k tris</div>
+              <div ref={perfLine2Ref} className="text-slate-400">
+                E:0 · P:0 · VFX:0 · Assets:0 (0ms)
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Center Column: Active Target Readout + Non-Blocking Tactical Announcement Banner */}
-        <div className="flex flex-col items-center gap-2">
+        {/* Top-Center: Compact Locked Target Strip + Animated Objective Announcements */}
+        <div className="flex flex-col items-center gap-1.5">
           <div
             ref={targetCardRef}
-            className="hidden border border-orange-400/35 bg-[#040a18]/85 px-4 py-2 transition-opacity duration-150 md:block"
-            style={{ opacity: 0, minWidth: 210 }}
+            className="obsidian-hud hidden border-orange-400/45 px-3 py-1.5 transition-opacity duration-150 md:block"
+            style={{ opacity: 0, minWidth: 184 }}
           >
-            <div className="flex items-baseline justify-between gap-4">
-              <span ref={targetNameRef} className="font-display text-sm font-semibold text-orange-300">
+            <div className="flex items-baseline justify-between gap-3">
+              <span ref={targetNameRef} className="font-display text-xs font-bold tracking-wider text-orange-300">
                 VEX-01
               </span>
-              <span ref={targetDistRef} className="font-mono text-xs tabular-nums text-slate-300">
+              <span ref={targetDistRef} className="font-mono text-[10px] tabular-nums text-slate-300">
                 0 m
               </span>
             </div>
-            <div className="mt-1 h-1.5 w-full overflow-hidden bg-slate-800">
+            <div className="mt-1 h-[2px] w-full overflow-hidden bg-slate-800/90">
               <div
                 ref={targetHealthBarRef}
                 className="h-full w-full origin-left bg-orange-400"
                 style={{ transform: 'scaleX(1)', willChange: 'transform' }}
               />
             </div>
-            <div ref={targetRoleRef} className="mt-1 font-mono text-[10px] text-slate-400">
-              AGGRESSOR · ENGAGE
-            </div>
           </div>
 
-          {missionHud?.announcement && (
-            <div
-              className={`border px-4 py-1.5 font-mono text-xs tracking-wider ${
-                missionHud.announcementKind === 'warning'
-                  ? 'border-amber-400/60 bg-[#1a1105]/90 text-amber-200'
-                  : missionHud.announcementKind === 'complete'
-                    ? 'border-cyan-400/60 bg-[#051b26]/90 text-cyan-200'
-                    : 'border-cyan-500/35 bg-[#040a18]/88 text-slate-100'
-              }`}
-            >
-              {missionHud.announcement}
-            </div>
-          )}
+          <AnimatePresence mode="wait">
+            {missionHud?.announcement && (
+              <motion.div
+                key={missionHud.announcement}
+                initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -4 }}
+                transition={{ duration: 0.18, ease: TECH_EASE }}
+                className={`obsidian-hud obsidian-scan border-l-2 px-3.5 py-1 font-mono text-[10px] uppercase tracking-[0.18em] ${
+                  missionHud.announcementKind === 'warning'
+                    ? 'border-l-amber-400 text-amber-200'
+                    : missionHud.announcementKind === 'complete'
+                      ? 'border-l-emerald-400 text-emerald-200'
+                      : 'border-l-[#38bdf8] text-[#e0f2fe]'
+                }`}
+              >
+                {missionHud.announcement}
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
-        {/* Right Column: Pause Button + Mission Objectives Panel */}
-        <div className="flex flex-col items-end gap-2">
+        {/* Top-Right: Minimal Pause + Compact Active Objective Strip */}
+        <div className="flex flex-col items-end gap-1.5">
           <button
             type="button"
             onClick={onPause}
-            className="pointer-events-auto flex items-center gap-2 border border-slate-700/80 bg-[#040a18]/82 px-3.5 py-2 text-xs font-medium text-slate-200 transition-colors hover:border-cyan-400/60 hover:text-cyan-200 focus-visible:outline-2 focus-visible:outline-cyan-400 whitespace-nowrap shrink-0"
+            className="obsidian-hud obsidian-surface-interactive pointer-events-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider text-slate-300 hover:text-[#38bdf8] focus-visible:outline-2 focus-visible:outline-[#38bdf8]"
             aria-label="Pause Flight"
           >
-            <Pause className="h-3.5 w-3.5 text-cyan-400" />
-            <span>Pause</span>
-            <span className="font-mono text-[11px] text-slate-400">ESC</span>
+            <Pause className="h-3 w-3 text-[#38bdf8]" />
+            <span>ESC</span>
           </button>
 
           {missionHud && (
-            <div className="hidden w-72 border border-slate-700/75 bg-[#040a18]/84 px-3.5 py-2.5 sm:block">
-              <div className="flex items-center justify-between border-b border-slate-800/90 pb-1.5 font-mono text-[11px]">
-                <span className="font-semibold text-cyan-300">
-                  {missionHud.missionCode} · {missionHud.missionName}
-                </span>
+            <div className="obsidian-hud hidden w-60 border-r-2 border-r-[#38bdf8]/75 px-3 py-2 sm:block">
+              <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-wider">
+                <span className="truncate font-semibold text-[#38bdf8]">{missionHud.missionCode}</span>
                 {missionHud.totalWaves > 1 && (
                   <span className="text-slate-400">
                     W{missionHud.waveIndex}/{missionHud.totalWaves}
                   </span>
                 )}
               </div>
-              {missionHud.stageLabel && (
-                <div className="mt-1 font-mono text-[10px] uppercase tracking-wider text-slate-400">
-                  {missionHud.stageLabel}
-                </div>
-              )}
-              <ul className="mt-2 space-y-1.5">
+              <ul className="mt-1.5 space-y-1">
                 {missionHud.objectives.map((obj) => {
                   const done = obj.status === 'completed';
                   const progressLabel =
                     obj.status === 'locked'
                       ? 'LOCKED'
                       : obj.status === 'skipped'
-                        ? 'SKIPPED'
+                        ? 'SKIP'
                       : obj.status === 'failed'
-                        ? 'MISSED'
+                        ? 'FAIL'
                       : obj.type === 'recon'
-                        ? `${Math.floor(obj.progress * 100)}% SCAN`
+                        ? `${Math.floor(obj.progress * 100)}%`
                       : obj.type === 'defend'
-                        ? `${obj.currentCount}/${obj.targetCount} WAVES`
+                        ? `${obj.currentCount}/${obj.targetCount}W`
                       : obj.type === 'survive_duration'
-                        ? `${Math.floor(obj.elapsedSec)}s / ${obj.targetDurationSec}s`
+                        ? `${Math.floor(obj.elapsedSec)}/${obj.targetDurationSec}s`
                       : obj.type === 'escort' || obj.type === 'escort_transport'
-                        ? (missionHud.transport?.progress ?? obj.progress) >= 1 ? 'EXTRACTED' : `${Math.round((missionHud.transport?.progress ?? obj.progress) * 100)}%`
+                        ? (missionHud.transport?.progress ?? obj.progress) >= 1 ? 'DONE' : `${Math.round((missionHud.transport?.progress ?? obj.progress) * 100)}%`
                       : obj.type === 'defeat_target' || obj.type === 'intercept' || obj.type === 'boss'
-                        ? done
-                          ? 'DONE'
-                          : 'ACTIVE'
+                        ? done ? 'DONE' : 'LIVE'
                       : obj.type === 'extract'
-                        ? done ? 'CONFIRMED' : 'AWAITING'
+                        ? done ? 'DONE' : 'WAIT'
                         : `${obj.currentCount}/${obj.targetCount}`;
 
                   return (
                     <li
                       key={obj.id}
-                      className={`flex items-start justify-between gap-2 text-[11px] ${
-                        done || obj.status === 'skipped' || obj.status === 'failed' ? 'text-slate-500' : obj.status === 'locked' ? 'text-slate-500' : 'text-slate-200'
+                      className={`flex items-start justify-between gap-2 text-[10px] leading-tight ${
+                        done || obj.status === 'skipped' || obj.status === 'failed' || obj.status === 'locked'
+                          ? 'text-slate-500'
+                          : 'text-slate-200'
                       }`}
                     >
-                      <span className="flex items-start gap-1.5">
+                      <span className="flex min-w-0 items-start gap-1.5">
                         {done ? (
-                          <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-cyan-400" />
+                          <CheckCircle2 className="mt-0.5 h-2.5 w-2.5 shrink-0 text-[#38bdf8]" />
                         ) : (
-                          <Circle className={`mt-0.5 h-3 w-3 shrink-0 ${obj.status === 'locked' ? 'text-slate-600' : 'text-cyan-300/80'}`} />
+                          <Circle className={`mt-0.5 h-2.5 w-2.5 shrink-0 ${obj.status === 'locked' ? 'text-slate-600' : 'text-[#38bdf8]/80'}`} />
                         )}
-                        <span>{obj.label}{obj.optional ? ' · OPTIONAL' : ''}</span>
+                        <span className="truncate">{obj.label}</span>
                       </span>
-                      <span className="font-mono text-[10px] tabular-nums text-cyan-300 shrink-0">
+                      <span className="shrink-0 font-mono text-[9px] tabular-nums text-[#38bdf8]">
                         {progressLabel}
                       </span>
                     </li>
@@ -879,47 +870,39 @@ export function FlightHUD({
                 })}
               </ul>
               {missionHud.interaction && (
-                <div className="mt-2 border-t border-slate-800/90 pt-2">
-                  <div className={`font-mono text-[10px] tracking-wider ${missionHud.interaction.available ? 'text-amber-200' : 'text-slate-400'}`}>
-                    {missionHud.interaction.prompt}
+                <div className="mt-1.5 border-t border-white/8 pt-1.5">
+                  <div className={`flex items-center justify-between font-mono text-[9px] tracking-wider ${missionHud.interaction.available ? 'text-amber-200' : 'text-slate-400'}`}>
+                    <span className="truncate">{missionHud.interaction.prompt}</span>
+                    {missionHud.interaction.distance != null && (
+                      <span className="ml-2 shrink-0 text-slate-500">{Math.round(missionHud.interaction.distance)}M</span>
+                    )}
                   </div>
                   {missionHud.interaction.kind === 'scan' && (
-                    <div className="mt-1 h-1 bg-slate-800">
-                      <div className="h-full bg-cyan-400 transition-[width]" style={{ width: `${Math.round(missionHud.interaction.progress * 100)}%` }} />
-                    </div>
-                  )}
-                  {missionHud.interaction.distance != null && (
-                    <div className="mt-1 text-right font-mono text-[9px] text-slate-500">
-                      {Math.round(missionHud.interaction.distance)} M
+                    <div className="mt-1 h-[2px] bg-slate-800/90">
+                      <div className="h-full bg-[#38bdf8] transition-[width]" style={{ width: `${Math.round(missionHud.interaction.progress * 100)}%` }} />
                     </div>
                   )}
                 </div>
               )}
               {missionHud.relay && (
-                <div className="mt-2 border-t border-slate-800/90 pt-2">
-                  <div className="flex justify-between font-mono text-[10px] text-cyan-200">
-                    <span>DEFEND · {missionHud.relay.callsign}</span>
-                    <span>{Math.ceil(missionHud.relay.currentIntegrity)} / {missionHud.relay.maxIntegrity}</span>
+                <div className="mt-1.5 border-t border-white/8 pt-1.5">
+                  <div className="flex justify-between font-mono text-[9px] text-[#bae6fd]">
+                    <span>{missionHud.relay.callsign}</span>
+                    <span>{Math.ceil(missionHud.relay.currentIntegrity)}/{missionHud.relay.maxIntegrity}</span>
                   </div>
-                  <div className="mt-1 h-1 bg-slate-800">
-                    <div className="h-full bg-cyan-400 transition-[width]" style={{ width: `${Math.max(0, missionHud.relay.currentIntegrity / missionHud.relay.maxIntegrity * 100)}%` }} />
-                  </div>
-                  <div className="mt-1 text-right font-mono text-[9px] tracking-wider text-cyan-300/80">
-                    {missionHud.relay.destroyed ? 'DEFENSE LINE BREACHED' : 'RELAY SECURE'}
+                  <div className="mt-1 h-[2px] bg-slate-800/90">
+                    <div className="h-full bg-[#38bdf8] transition-[width]" style={{ width: `${Math.max(0, missionHud.relay.currentIntegrity / missionHud.relay.maxIntegrity * 100)}%` }} />
                   </div>
                 </div>
               )}
               {missionHud.transport && (
-                <div className="mt-2 border-t border-slate-800/90 pt-2">
-                  <div className="flex justify-between font-mono text-[10px] text-amber-200">
-                    <span>ESCORT · {missionHud.transport.callsign}</span>
-                    <span>{Math.ceil(missionHud.transport.currentHull)} / {missionHud.transport.maxHull} HULL</span>
+                <div className="mt-1.5 border-t border-white/8 pt-1.5">
+                  <div className="flex justify-between font-mono text-[9px] text-amber-200">
+                    <span>{missionHud.transport.callsign}</span>
+                    <span>{Math.ceil(missionHud.transport.currentHull)}/{missionHud.transport.maxHull}</span>
                   </div>
-                  <div className="mt-1 h-1 bg-slate-800">
+                  <div className="mt-1 h-[2px] bg-slate-800/90">
                     <div className="h-full bg-amber-400 transition-[width]" style={{ width: `${Math.max(0, missionHud.transport.currentHull / missionHud.transport.maxHull * 100)}%` }} />
-                  </div>
-                  <div className="mt-1 text-right font-mono text-[9px] tracking-wider text-amber-300/80">
-                    {(missionHud.transport.progress * 100).toFixed(0)}% TO EXTRACTION
                   </div>
                 </div>
               )}
@@ -928,159 +911,113 @@ export function FlightHUD({
         </div>
       </div>
 
-      {/* Click-to-Lock Mouse Flight Notice (engages synchronous Pointer Lock for continuous turning) */}
+      {/* Click-to-Lock Mouse Flight Notice */}
       {!pointerLocked && !playerDestroyed && (
         <div className="pointer-events-auto fixed left-1/2 top-[64%] -translate-x-1/2">
           <button
             type="button"
             onClick={onRequestLock}
-            className="border border-cyan-400/55 bg-[#040a18]/92 px-5 py-2.5 text-xs font-medium tracking-wide text-cyan-200 transition-colors hover:border-cyan-300 hover:bg-[#081631] focus-visible:outline-2 focus-visible:outline-cyan-400"
+            className="obsidian-cta-primary obsidian-scan px-5 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-[#e0f2fe] focus-visible:outline-2 focus-visible:outline-[#38bdf8]"
           >
-            Click to Engage Continuous Mouse Flight & Weapons (Pointer Lock)
+            Engage Flight Controls
           </button>
         </div>
       )}
 
-      {/* Bottom Tactical Instrument Strip + Collapsible Control Hints */}
-      <div className="flex flex-col items-center gap-2.5">
-        <div className="grid w-full max-w-4xl grid-cols-1 gap-3 sm:grid-cols-3">
-          {/* Left: Defensive Systems & Primary Weapon Status */}
-          <div className="border border-slate-700/70 bg-[#040a18]/84 px-4 py-3">
-            <div className="flex items-baseline justify-between">
-              <span className="text-xs font-medium text-cyan-200">Shield</span>
-              <span ref={shieldNumRef} className="font-mono text-xs font-semibold tabular-nums text-cyan-100">{ship.maxShield} / {ship.maxShield}</span>
-            </div>
-            <div className="mt-1 h-1 w-full overflow-hidden bg-slate-800">
-              <div ref={shieldBarRef} className="h-full w-full origin-left bg-cyan-400" style={{ transform: 'scaleX(1)', willChange: 'transform' }} />
-            </div>
-            <div className="flex items-baseline justify-between">
-              <span className="text-xs font-medium text-slate-400">Hull</span>
-              <span
-                ref={hullNumRef}
-                className="font-mono text-xs font-semibold tabular-nums text-slate-100"
-              >
-                {ship.maxHull} / {ship.maxHull}
-              </span>
-            </div>
-            <div className="mt-1 h-1 w-full overflow-hidden bg-slate-800">
-              <div
-                ref={hullBarRef}
-                className="h-full w-full origin-left bg-sky-400"
-                style={{ transform: 'scaleX(1)', willChange: 'transform' }}
-              />
-            </div>
-            <div className="mt-1.5 flex items-center justify-between text-[10px]">
-              <span ref={shieldStatusRef} className="font-mono text-slate-400">ONLINE</span>
-              <span className="text-slate-400">{ship.weapons.primaryName}</span>
-              <span ref={weaponStatusRef} className="font-mono font-medium text-slate-300">
-                READY
-              </span>
-            </div>
+      {/* Bottom Edges: Compact Corner Instruments leaving center completely clear */}
+      <div className="flex items-end justify-between gap-4">
+        {/* Bottom-Left: Compact Survivability, Boost & Speed */}
+        <div className="obsidian-hud w-48 border-l-2 border-l-[#38bdf8] px-3 py-2 sm:w-52">
+          <div className="flex items-center justify-between font-mono text-[10px]">
+            <span className="flex items-center gap-1.5 text-[#38bdf8]">
+              <span>SHD</span>
+              <span ref={shieldStatusRef} className="text-[9px] font-semibold" />
+            </span>
+            <span ref={shieldNumRef} className="tabular-nums text-slate-100">
+              {ship.maxShield} / {ship.maxShield}
+            </span>
+          </div>
+          <div className="mt-1 h-[3px] w-full overflow-hidden bg-slate-800/90">
+            <div ref={shieldBarRef} className="h-full w-full origin-left bg-[#38bdf8]" style={{ transform: 'scaleX(1)', willChange: 'transform' }} />
           </div>
 
-          {/* Center: Boost Energy & Flight Status */}
-          <div className="border border-cyan-500/30 bg-[#040a18]/84 px-4 py-3">
-            <div className="flex items-baseline justify-between">
-              <span ref={boostLabelRef} className="text-xs font-medium text-cyan-200">
-                Boost Energy
-              </span>
-              <span
-                ref={boostNumRef}
-                className="font-mono text-sm font-semibold tabular-nums text-cyan-300"
-              >
-                100%
-              </span>
-            </div>
-            <div className="mt-2 h-1.5 w-full overflow-hidden bg-slate-800">
-              <div
-                ref={boostBarRef}
-                className="h-full w-full origin-left bg-cyan-400"
-                style={{ transform: 'scaleX(1)', willChange: 'transform' }}
-              />
-            </div>
-            <div className="mt-1.5 flex items-center justify-between text-[11px]">
-              <span className="text-slate-400">Flight Status</span>
-              <span
-                ref={statusTextRef}
-                className="font-mono font-medium tracking-wider text-slate-300"
-              >
-                STANDBY
-              </span>
-            </div>
+          <div className="mt-1.5 flex items-center justify-between font-mono text-[10px]">
+            <span className="text-slate-400">HUL</span>
+            <span ref={hullNumRef} className="tabular-nums text-slate-100">
+              {ship.maxHull} / {ship.maxHull}
+            </span>
+          </div>
+          <div className="mt-1 h-[3px] w-full overflow-hidden bg-slate-800/90">
+            <div ref={hullBarRef} className="h-full w-full origin-left bg-sky-400" style={{ transform: 'scaleX(1)', willChange: 'transform' }} />
           </div>
 
-          {/* Right: Velocity Readout */}
-          <div className="border border-slate-700/70 bg-[#040a18]/84 px-4 py-3">
-            <div className="flex items-baseline justify-between">
-              <span className="text-xs font-medium text-slate-400">Velocity</span>
-              <div className="flex items-baseline gap-1">
-                <span
-                  ref={speedNumRef}
-                  className="font-display text-xl font-bold leading-none tabular-nums text-slate-100"
-                >
-                  0
-                </span>
-                <span className="font-mono text-[11px] text-slate-400">m/s</span>
+          <div className="mt-2 flex items-center gap-2.5 border-t border-white/8 pt-1.5">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between font-mono text-[9px]">
+                <span className="text-slate-500">BST</span>
+                <span ref={boostNumRef} className="tabular-nums text-[#38bdf8]">100%</span>
+              </div>
+              <div className="mt-1 h-[2px] w-full overflow-hidden bg-slate-800/90">
+                <div ref={boostBarRef} className="h-full w-full origin-left bg-[#38bdf8]" style={{ transform: 'scaleX(1)', willChange: 'transform' }} />
               </div>
             </div>
-            <div className="mt-2 h-1.5 w-full overflow-hidden bg-slate-800">
-              <div
-                ref={speedBarRef}
-                className="h-full w-full origin-left bg-cyan-500"
-                style={{ transform: 'scaleX(0)', willChange: 'transform' }}
-              />
-            </div>
-            <div className="mt-1.5 flex items-center justify-between font-mono text-[11px] tabular-nums text-slate-400">
-              <span>Cruise {ship.flight.maxSpeed}</span>
-              <span>Boost {Math.round(ship.flight.maxSpeed * ship.flight.boostMultiplier)}</span>
+            <div className="flex shrink-0 items-baseline gap-0.5 border-l border-white/10 pl-2.5">
+              <span ref={speedNumRef} className="font-display text-sm font-bold leading-none tabular-nums text-slate-100">
+                0
+              </span>
+              <span className="font-mono text-[8px] text-slate-500">M/S</span>
             </div>
           </div>
         </div>
 
-        {/* Collapsible Control Hints Strip */}
-        <div className="pointer-events-auto flex flex-col items-center">
+        {/* Bottom-Center: Whisper-Quiet Collapsible Hints */}
+        <div className="pointer-events-auto hidden flex-col items-center md:flex">
+          {hintsVisible && (
+            <div className="obsidian-hud mb-1 flex items-center gap-2.5 px-3 py-1 font-mono text-[9px] uppercase tracking-wider text-slate-400">
+              <span><strong className="text-[#38bdf8]">LMB</strong> FIRE</span>
+              <span className="text-slate-700">/</span>
+              <span><strong className="text-[#38bdf8]">M</strong> MSL</span>
+              <span className="text-slate-700">/</span>
+              <span><strong className="text-[#38bdf8]">W·S</strong> THR</span>
+              <span className="text-slate-700">/</span>
+              <span><strong className="text-[#38bdf8]">A·D</strong> ROL</span>
+              <span className="text-slate-700">/</span>
+              <span><strong className="text-[#38bdf8]">SHFT</strong> BST</span>
+              {missionHud?.interaction && (
+                <>
+                  <span className="text-slate-700">/</span>
+                  <span><strong className="text-amber-300">E</strong> ACT</span>
+                </>
+              )}
+            </div>
+          )}
           <button
             type="button"
             onClick={onToggleHints}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-slate-400 transition-colors hover:text-cyan-300"
+            className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-widest text-slate-500/80 transition-colors hover:text-[#38bdf8]"
           >
-            {hintsVisible ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
-            <span>{hintsVisible ? 'Hide Controls (H)' : 'Show Controls (H)'}</span>
+            {hintsVisible ? <ChevronDown className="h-2.5 w-2.5" /> : <ChevronUp className="h-2.5 w-2.5" />}
+            <span>H</span>
           </button>
+        </div>
 
-          {hintsVisible && (
-            <div className="mt-1 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 border border-slate-800/90 bg-[#040a18]/85 px-4 py-1.5 text-xs text-slate-300">
-              <span>
-                <strong className="font-mono text-cyan-300">Mouse</strong> Continuous Steer
-              </span>
-              <span className="text-slate-600" aria-hidden="true">·</span>
-              <span>
-                <strong className="font-mono text-cyan-300">LMB / Space</strong> Fire
-              </span>
-              <span className="text-slate-600" aria-hidden="true">·</span>
-              <span>
-                <strong className="font-mono text-cyan-300">W / S</strong> Thrust / Reverse
-              </span>
-              <span className="text-slate-600" aria-hidden="true">·</span>
-              <span>
-                <strong className="font-mono text-cyan-300">A / D</strong> Roll
-              </span>
-              <span className="text-slate-600" aria-hidden="true">·</span>
-              <span>
-                <strong className="font-mono text-cyan-300">Shift</strong> Boost
-              </span>
-              {missionHud?.interaction && (
-                <>
-                  <span className="text-slate-600" aria-hidden="true">·</span>
-                  <span><strong className="font-mono text-amber-300">Hold E</strong> Scan / Extract</span>
-                </>
-              )}
-              <span className="text-slate-600" aria-hidden="true">·</span>
-              <span>
-                <strong className="font-mono text-cyan-300">Esc</strong> Pause
-              </span>
-            </div>
-          )}
+        {/* Bottom-Right: Compact Ordnance & Integrated Missile Lock-On */}
+        <div
+          ref={lockPanelRef}
+          className="obsidian-hud w-48 border-r-2 border-r-[#38bdf8] px-3 py-2 font-mono sm:w-52"
+          style={{ opacity: 0.72 }}
+        >
+          <div className="flex items-center justify-between text-[10px]">
+            <span ref={weaponStatusRef} className="text-slate-300">READY</span>
+            <span ref={missileAmmoRef} className="font-semibold text-amber-300">4 · M</span>
+          </div>
+          <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-white/8 pt-1.5 text-[9px]">
+            <span ref={lockNameRef} className="truncate text-slate-200">NO TARGET</span>
+            <span ref={lockStateRef} className="shrink-0 text-[#38bdf8]">SEEK</span>
+          </div>
+          <div className="mt-1 h-[3px] w-full overflow-hidden bg-slate-800/90">
+            <div ref={lockBarRef} className="h-full w-full origin-left bg-[#38bdf8]" style={{ transform: 'scaleX(0)' }} />
+          </div>
         </div>
       </div>
     </div>

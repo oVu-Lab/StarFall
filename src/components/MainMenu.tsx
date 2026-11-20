@@ -1,3 +1,4 @@
+import { motion } from 'motion/react';
 import { Compass, Play, SlidersHorizontal } from 'lucide-react';
 import { AudioManager } from '../audio/AudioManager';
 import { CAMPAIGN_MISSIONS } from '../config/missions';
@@ -6,6 +7,7 @@ import type { CampaignSaveData, MissionDefinition } from '../types/mission';
 import { HangarView } from './HangarView';
 import { MissionSelectView } from './MissionSelectView';
 import { SettingsPanel } from './SettingsPanel';
+import { ObsidianCorners, ObsidianEnergySpine, TECH_EASE } from './ui/ObsidianUI';
 
 interface MainMenuProps {
   section: MenuSection;
@@ -76,7 +78,7 @@ export function MainMenu({
 
   if (section === 'settings') {
     return (
-      <div className="fixed inset-0 z-20 flex items-center justify-center bg-[#030712]/65 p-6">
+      <div className="fixed inset-0 z-20 flex items-center justify-center bg-[#02040a]/75 p-5 sm:p-6">
         <SettingsPanel
           settings={settings}
           onUpdateSettings={onUpdateSettings}
@@ -88,23 +90,29 @@ export function MainMenu({
   }
 
   const completedCount = CAMPAIGN_MISSIONS.filter((m) => campaignSave.missions[m.id]?.completed).length;
+  const credits = campaignSave.rewards?.credits ?? 0;
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-20 flex flex-col justify-between p-8 sm:p-12 lg:p-16">
-      {/* Subtle left-side scrim ensuring high contrast over bright nebulae while leaving 3D fighter unobstructed */}
+    <div className="pointer-events-none fixed inset-0 z-20 flex flex-col justify-between p-6 sm:p-10 lg:p-14">
+      {/* Subtle left atmospheric falloff — keeps right-side 3D fighter completely open */}
       <div
-        className="pointer-events-none fixed inset-y-0 left-0 -z-10 w-full max-w-xl bg-gradient-to-r from-[#030712]/88 via-[#030712]/55 to-transparent"
+        className="pointer-events-none fixed inset-y-0 left-0 -z-10 w-[min(36rem,75vw)] bg-gradient-to-r from-[#02040a]/82 via-[#02040a]/35 to-transparent"
         aria-hidden="true"
       />
 
-      {/* Top Brand Wordmark */}
-      <div className="max-w-lg">
+      {/* Top Brand Monolith Plaque */}
+      <motion.div
+        initial={{ opacity: 0, x: -18 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.34, ease: TECH_EASE }}
+        className="max-w-md"
+      >
         <div className="flex items-center gap-3">
           <svg
-            width="28"
-            height="28"
+            width="24"
+            height="24"
             viewBox="0 0 28 28"
-            className="shrink-0 text-cyan-400"
+            className="shrink-0 text-[#38bdf8]"
             aria-hidden="true"
           >
             <polygon
@@ -115,23 +123,29 @@ export function MainMenu({
             />
             <polygon points="14,7 19,17 14,14.5 9,17" fill="currentColor" />
           </svg>
-          <span className="font-mono text-xs tracking-[0.26em] text-cyan-300">
-            ORBITAL COMBAT CAMPAIGN
+          <span className="font-mono text-[10px] uppercase tracking-[0.32em] text-[#38bdf8]">
+            Orbital Combat
           </span>
         </div>
 
-        <h1 className="mt-3 font-display text-5xl font-bold tracking-[0.14em] text-slate-50 sm:text-6xl">
+        <h1 className="mt-2 font-display text-5xl font-bold tracking-[0.18em] text-slate-50 sm:text-6xl">
           STARFALL
         </h1>
 
-        <p className="mt-3 max-w-md text-sm leading-relaxed text-slate-300">
-          Six-degree-of-freedom arcade space combat. Command the VX-9 Vanguard through six
-          escalating operations, from first contact to the Aurelia evacuation.
-        </p>
-      </div>
+        <div className="mt-3 h-px w-44 bg-gradient-to-r from-[#38bdf8]/80 via-[#38bdf8]/25 to-transparent" />
+      </motion.div>
 
-      {/* Primary Action Stack */}
-      <div className="pointer-events-auto flex w-full max-w-xs flex-col gap-3">
+      {/* Left-Anchored Obsidian Command Navigation */}
+      <motion.nav
+        aria-label="Main navigation"
+        initial={{ opacity: 0, x: -20 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.32, delay: 0.08, ease: TECH_EASE }}
+        className="obsidian-monolith pointer-events-auto relative flex w-full max-w-[19.5rem] flex-col overflow-hidden"
+      >
+        <ObsidianEnergySpine orientation="vertical" side="left" />
+        <ObsidianCorners subtle />
+
         <button
           type="button"
           onMouseEnter={() => AudioManager.playUiHover()}
@@ -140,13 +154,13 @@ export function MainMenu({
             AudioManager.playUiClick('primary');
             onChangeSection('missions');
           }}
-          className="group flex items-center justify-between bg-cyan-500 px-6 py-3.5 text-sm font-semibold tracking-wide text-slate-950 transition-colors hover:bg-cyan-400 focus-visible:outline-2 focus-visible:outline-cyan-300"
+          className="obsidian-cta-primary obsidian-scan group flex items-center justify-between border-0 border-b border-b-[#38bdf8]/40 px-5 py-4 text-left text-sm font-semibold uppercase tracking-[0.16em] text-[#e0f2fe] focus-visible:outline-2 focus-visible:outline-[#38bdf8]"
         >
-          <span className="flex items-center gap-3">
-            <Play className="h-4 w-4 fill-current" />
-            <span>Campaign Missions</span>
+          <span className="flex items-center gap-3 font-display">
+            <Play className="h-4 w-4 fill-[#38bdf8] text-[#38bdf8] transition-transform duration-150 group-hover:translate-x-0.5" />
+            <span>Campaign</span>
           </span>
-          <span className="font-mono text-xs text-slate-900/80">
+          <span className="font-mono text-[11px] tabular-nums text-[#38bdf8]">
             {completedCount}/{CAMPAIGN_MISSIONS.length}
           </span>
         </button>
@@ -159,13 +173,15 @@ export function MainMenu({
             AudioManager.playUiClick('secondary');
             onChangeSection('hangar');
           }}
-          className="flex items-center justify-between border border-slate-700/90 bg-[#050c1d]/85 px-6 py-3 text-sm font-medium text-slate-100 transition-colors hover:border-cyan-400/70 hover:text-cyan-200 focus-visible:outline-2 focus-visible:outline-cyan-400"
+          className="group flex items-center justify-between border-b border-white/8 px-5 py-3.5 text-left text-sm font-medium tracking-wider text-slate-200 transition-colors hover:bg-[#38bdf8]/[0.06] hover:text-[#e0f2fe] focus-visible:outline-2 focus-visible:outline-[#38bdf8]"
         >
-          <span className="flex items-center gap-3">
-            <Compass className="h-4 w-4 text-cyan-400" />
+          <span className="flex items-center gap-3 font-display uppercase tracking-[0.14em]">
+            <Compass className="h-4 w-4 text-[#38bdf8]" />
             <span>Hangar</span>
           </span>
-          <span className="font-mono text-xs text-slate-400">3 Ships</span>
+          <span className="font-mono text-[11px] tabular-nums text-slate-400 group-hover:text-[#38bdf8]">
+            {credits.toLocaleString()} CR
+          </span>
         </button>
 
         <button
@@ -176,30 +192,45 @@ export function MainMenu({
             AudioManager.playUiClick('secondary');
             onChangeSection('settings');
           }}
-          className="flex items-center justify-between border border-slate-700/90 bg-[#050c1d]/85 px-6 py-3 text-sm font-medium text-slate-100 transition-colors hover:border-cyan-400/70 hover:text-cyan-200 focus-visible:outline-2 focus-visible:outline-cyan-400"
+          className="group flex items-center justify-between px-5 py-3.5 text-left text-sm font-medium tracking-wider text-slate-300 transition-colors hover:bg-[#38bdf8]/[0.06] hover:text-[#e0f2fe] focus-visible:outline-2 focus-visible:outline-[#38bdf8]"
         >
-          <span className="flex items-center gap-3">
-            <SlidersHorizontal className="h-4 w-4 text-cyan-400" />
+          <span className="flex items-center gap-3 font-display uppercase tracking-[0.14em]">
+            <SlidersHorizontal className="h-4 w-4 text-[#38bdf8]" />
             <span>Settings</span>
           </span>
-          <span className="font-mono text-xs text-slate-400">Graphics & Audio</span>
+          <span className="font-mono text-[10px] uppercase tracking-wider text-slate-500 group-hover:text-slate-300">
+            SYS
+          </span>
         </button>
-      </div>
+      </motion.nav>
 
-      {/* Quiet Flight Controls Summary Footer */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-400">
-        <span>Mouse Continuous Steer</span>
-        <span aria-hidden="true">·</span>
-        <span>LMB Fire</span>
-        <span aria-hidden="true">·</span>
-        <span>W / S Thrust</span>
-        <span aria-hidden="true">·</span>
-        <span>A / D Roll</span>
-        <span aria-hidden="true">·</span>
-        <span>Shift Boost</span>
-        <span aria-hidden="true">·</span>
-        <span>{CAMPAIGN_MISSIONS.length} Campaign Missions</span>
-      </div>
+      {/* Minimal Technical Keybind Strip */}
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.28, delay: 0.14, ease: TECH_EASE }}
+        className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] tracking-wider text-slate-400"
+      >
+        <span>
+          <strong className="text-[#38bdf8]">MOUSE</strong> STEER
+        </span>
+        <span className="text-slate-700" aria-hidden="true">/</span>
+        <span>
+          <strong className="text-[#38bdf8]">LMB</strong> FIRE
+        </span>
+        <span className="text-slate-700" aria-hidden="true">/</span>
+        <span>
+          <strong className="text-[#38bdf8]">W·S</strong> THRUST
+        </span>
+        <span className="text-slate-700" aria-hidden="true">/</span>
+        <span>
+          <strong className="text-[#38bdf8]">A·D</strong> ROLL
+        </span>
+        <span className="text-slate-700" aria-hidden="true">/</span>
+        <span>
+          <strong className="text-[#38bdf8]">SHIFT</strong> BOOST
+        </span>
+      </motion.div>
     </div>
   );
 }

@@ -41,6 +41,9 @@ export class CameraController {
   private currentFov = 62;
   private initialized = false;
   private orbitTime = 0;
+  private hangarYaw = 0.68;
+  private hangarPitch = 0.19;
+  private hangarInitialized = false;
 
   public snapToShip(flight: FlightController, camera: THREE.PerspectiveCamera, distance: number): void {
     _offsetLocal.set(0, 2.35, distance).applyQuaternion(flight.quaternion);
@@ -232,14 +235,73 @@ export class CameraController {
     manualPitchOffset = 0,
   ): void {
     const safeDt = Math.min(Math.max(dt, 0.0001), 0.05);
-    this.orbitTime += safeDt * (mode === 'hangar' ? 0.13 : 0.14);
+    this.orbitTime += safeDt * (mode === 'hangar' ? 0.12 : 0.14);
 
-    const radius = mode === 'hangar' ? 10.2 : 11.4;
-    const angle = (mode === 'hangar' ? 0.68 : 0.55) + this.orbitTime + manualYawOffset;
-    const elevation =
-      mode === 'hangar'
-        ? THREE.MathUtils.clamp(2.15 + manualPitchOffset * 4.0, -1.35, 5.1)
-        : 2.8 + Math.sin(this.orbitTime * 0.7) * 0.7;
+    if (mode === 'hangar') {
+      // Heroic close-up orbit on a constant-radius sphere using damped spherical coordinates.
+      // Keeps the spacecraft large, dominant, and strictly locked to the left showcase region
+      // at every yaw and pitch angle.
+      const targetYaw = 0.62 + this.orbitTime + manualYawOffset;
+      const targetPitch = THREE.MathUtils.clamp(0.16 + manualPitchOffset * 0.55, -0.26, 0.52);
+
+      if (!this.hangarInitialized) {
+        this.hangarYaw = targetYaw;
+        this.hangarPitch = targetPitch;
+        this.hangarInitialized = true;
+      } else {
+        this.hangarYaw = THREE.MathUtils.damp(this.hangarYaw, targetYaw, 10.0, safeDt);
+        this.hangarPitch = THREE.MathUtils.damp(this.hangarPitch, targetPitch, 10.0, safeDt);
+      }
+
+      const radius = 9.8;
+      const cosPitch = Math.cos(this.hangarPitch);
+      const sinPitch = Math.sin(this.hangarPitch);
+      const sinYaw = Math.sin(this.hangarYaw);
+      const cosYaw = Math.cos(this.hangarYaw);
+
+      this.currentPos.set(
+        targetPos.x + sinYaw * cosPitch * radius,
+        targetPos.y + sinPitch * radius,
+        targetPos.z + cosYaw * cosPitch * radius,
+      );
+
+      const targetFov = 41;
+      const nextFov = THREE.MathUtils.damp(this.currentFov, targetFov, 7.0, safeDt);
+      if (Math.abs(nextFov - this.currentFov) > 0.01) {
+        this.currentFov = nextFov;
+        camera.fov = this.currentFov;
+        camera.updateProjectionMatrix();
+      }
+
+      // With the narrower right monolith (~31% width), center the heroic ship cleanly in the
+      // open left ~68% showcase space (~34% from left edge) regardless of spin angle.
+      const isWideDesktop = camera.aspect > 1.15;
+      const halfHeight = radius * Math.tan(THREE.MathUtils.degToRad(this.currentFov * 0.5));
+      const halfWidth = halfHeight * camera.aspect;
+      const rightOffset = isWideDesktop ? Math.min(halfWidth * 0.34, 3.6) : 0;
+      const verticalOffset = isWideDesktop ? -0.05 : -0.75;
+
+      const camRightX = cosYaw;
+      const camRightZ = -sinYaw;
+
+      _lookTarget.set(
+        targetPos.x + camRightX * rightOffset,
+        targetPos.y + verticalOffset,
+        targetPos.z + camRightZ * rightOffset,
+      );
+
+      _lookMatrix.lookAt(this.currentPos, _lookTarget, _up.set(0, 1, 0));
+      this.currentQuat.setFromRotationMatrix(_lookMatrix);
+      camera.position.copy(this.currentPos);
+      camera.quaternion.copy(this.currentQuat);
+      this.initialized = false;
+      return;
+    }
+
+    this.hangarInitialized = false;
+    const radius = 11.4;
+    const angle = 0.55 + this.orbitTime;
+    const elevation = 2.8 + Math.sin(this.orbitTime * 0.7) * 0.7;
 
     _desiredPos.set(
       targetPos.x + Math.sin(angle) * radius,
@@ -247,29 +309,11 @@ export class CameraController {
       targetPos.z + Math.cos(angle) * radius,
     );
 
-    const alpha = 1 - Math.exp(-4.8 * safeDt);
+    const alpha = 1 - Math.exp(-4.5 * safeDt);
     this.currentPos.lerp(_desiredPos, alpha);
 
-    if (mode === 'hangar') {
-      // Frame the spacecraft cleanly in the unobstructed showcase region:
-      // on wide desktop viewports shift look-target along camera-right so the ship centers
-      // to the left of the inspector panel; on narrow screens shift down slightly so it
-      // sits cleanly above the bottom drawer.
-      const isWideDesktop = camera.aspect > 1.25;
-      const rightOffset = isWideDesktop ? 1.55 : 0;
-      const verticalOffset = isWideDesktop ? 0.1 : -0.6;
-      const camRightX = Math.cos(angle);
-      const camRightZ = -Math.sin(angle);
-      _lookTarget.set(
-        targetPos.x + camRightX * rightOffset,
-        targetPos.y + verticalOffset,
-        targetPos.z + camRightZ * rightOffset,
-      );
-    } else {
-      // Offset slightly right on menu so the fighter frames beautifully beside left-aligned menu actions
-      _lookTarget.set(targetPos.x - 2.2, targetPos.y + 0.25, targetPos.z);
-    }
-
+    // Offset slightly right on menu so the fighter frames beautifully beside left-aligned menu actions
+    _lookTarget.set(targetPos.x - 2.2, targetPos.y + 0.25, targetPos.z);
     _lookMatrix.lookAt(this.currentPos, _lookTarget, _up.set(0, 1, 0));
     _desiredQuat.setFromRotationMatrix(_lookMatrix);
     this.currentQuat.slerp(_desiredQuat, alpha);
@@ -277,7 +321,7 @@ export class CameraController {
     camera.position.copy(this.currentPos);
     camera.quaternion.copy(this.currentQuat);
 
-    const targetFov = mode === 'hangar' ? 44 : 52;
+    const targetFov = 52;
     const nextFov = THREE.MathUtils.damp(this.currentFov, targetFov, 5.0, safeDt);
     if (Math.abs(nextFov - this.currentFov) > 0.01) {
       this.currentFov = nextFov;

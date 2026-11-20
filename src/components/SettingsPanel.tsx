@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { motion } from 'motion/react';
 import { Volume2 } from 'lucide-react';
 import { AudioManager } from '../audio/AudioManager';
 import { getGraphicsPresetPatch } from '../config/graphics';
@@ -11,6 +12,7 @@ import type {
   GraphicsQuality,
   ShadowQuality,
 } from '../types/game';
+import { ObsidianCorners, ObsidianEnergySpine, TECH_EASE } from './ui/ObsidianUI';
 
 interface SettingsPanelProps {
   settings: GameSettings;
@@ -21,7 +23,7 @@ interface SettingsPanelProps {
 
 const QUALITY_OPTIONS: Array<{ value: GraphicsQuality; label: string }> = [
   { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
+  { value: 'medium', label: 'Med' },
   { value: 'high', label: 'High' },
   { value: 'ultra', label: 'Ultra' },
 ];
@@ -47,7 +49,6 @@ function SteeringCurvePreview({ settings }: { settings: GameSettings }) {
     const padY = 8;
     const plotW = W - padX * 2;
     const plotH = H - padY * 2;
-    // Plot normalized mouse input speed u in [0, 1.35] vs soft-saturated normalized turn rate [0, 1]
     const maxU = 1.35;
     const maxY = 1.05;
 
@@ -80,45 +81,41 @@ function SteeringCurvePreview({ settings }: { settings: GameSettings }) {
   }, [settings.responseCurve]);
 
   return (
-    <div className="border border-slate-800 bg-[#060f21] px-2.5 py-2">
-      <div className="mb-1 flex items-center justify-between font-mono text-[10px] text-slate-400">
-        <span>MOUSE CURVE · PRECISION → FAST TURN</span>
-        <span className="text-cyan-300">p={settings.responseCurve.toFixed(2)}</span>
+    <div className="obsidian-surface px-3 py-2">
+      <div className="mb-1 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.14em] text-slate-400">
+        <span>Response Curve</span>
+        <span className="tabular-nums text-[#38bdf8]">p={settings.responseCurve.toFixed(2)}</span>
       </div>
       <svg
         viewBox="0 0 240 64"
         className="h-14 w-full"
         aria-label="Nonlinear mouse steering response curve"
       >
-        {/* Max rate 1.0 reference line */}
         <line
           x1="8"
           y1="10.3"
           x2="232"
           y2="10.3"
-          stroke="rgba(148,163,184,0.2)"
+          stroke="rgba(148,163,184,0.18)"
           strokeDasharray="3 3"
           strokeWidth="1"
         />
-        {/* Normalized reference input speed marker (u = 1.0, 1600 px/s) */}
         <line
           x1={refSpeedXPos.toFixed(1)}
           y1="6"
           x2={refSpeedXPos.toFixed(1)}
           y2="58"
-          stroke="rgba(56,189,248,0.45)"
+          stroke="rgba(56,189,248,0.4)"
           strokeDasharray="2 2"
           strokeWidth="1"
         />
-        {/* Linear reference curve */}
         <path
           d={linearPath}
           fill="none"
-          stroke="rgba(148,163,184,0.32)"
+          stroke="rgba(148,163,184,0.28)"
           strokeDasharray="3 3"
           strokeWidth="1.2"
         />
-        {/* Active nonlinear response curve */}
         <path d={curvePath} fill="none" stroke="#38bdf8" strokeWidth="2" />
       </svg>
     </div>
@@ -129,7 +126,7 @@ export function SettingsPanel({
   settings,
   onUpdateSettings,
   onClose,
-  closeLabel = 'Back',
+  closeLabel = 'Done',
 }: SettingsPanelProps) {
   const effectiveBoundaryW = Math.round(
     STEERING_CONFIG.aimBoundaryWidth * settings.joystickRadius * 100,
@@ -139,44 +136,53 @@ export function SettingsPanel({
   );
 
   return (
-    <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto border border-slate-700/80 bg-[#050c1d]/96 p-6 sm:p-7">
-      <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.26, ease: TECH_EASE }}
+      className="obsidian-monolith obsidian-scroll relative max-h-[90vh] w-full max-w-3xl overflow-y-auto p-6 sm:p-7"
+    >
+      <ObsidianEnergySpine orientation="horizontal" />
+      <ObsidianCorners />
+
+      <div className="flex items-center justify-between gap-4 border-b border-white/10 pb-4">
         <div>
-          <h2 className="font-display text-2xl font-semibold tracking-wide text-slate-100">
-            Flight, Graphics & Audio Settings
+          <span className="font-mono text-[9px] uppercase tracking-[0.26em] text-[#38bdf8]">
+            System Configuration
+          </span>
+          <h2 className="mt-0.5 font-display text-2xl font-bold uppercase tracking-[0.1em] text-slate-50">
+            Settings
           </h2>
-          <p className="mt-0.5 text-xs text-slate-400">
-            All direct mouse steering, graphics, and audio settings apply immediately and persist locally.
-          </p>
         </div>
         <button
           type="button"
+          onMouseEnter={() => AudioManager.playUiHover()}
           onClick={() => {
             AudioManager.playUiClick('secondary');
             onUpdateSettings({ ...DEFAULT_SETTINGS });
           }}
-          className="border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:border-cyan-400/60 hover:text-cyan-200 whitespace-nowrap shrink-0"
+          className="obsidian-surface obsidian-surface-interactive shrink-0 whitespace-nowrap px-3.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-slate-300 hover:text-[#38bdf8]"
         >
-          Restore Defaults
+          Defaults
         </button>
       </div>
 
       <div className="mt-5 grid grid-cols-1 gap-6 md:grid-cols-2">
-        {/* Left Column: Direct Arcade Mouse Steering, Camera & Audio */}
+        {/* Left Column: Direct Mouse Steering, Camera & Audio */}
         <div className="space-y-3.5">
-          <h3 className="font-mono text-[11px] tracking-widest text-cyan-300">
-            DIRECT MOUSE STEERING
+          <h3 className="font-mono text-[10px] uppercase tracking-[0.24em] text-[#38bdf8]">
+            Steering
           </h3>
 
           <SteeringCurvePreview settings={settings} />
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3.5">
             <div>
               <div className="flex items-center justify-between text-xs">
-                <label htmlFor="setting-mouse-sens" className="font-medium text-slate-200">
-                  Base Sensitivity
+                <label htmlFor="setting-mouse-sens" className="text-slate-300">
+                  Sensitivity
                 </label>
-                <span className="font-mono tabular-nums text-cyan-300">
+                <span className="font-mono text-[11px] tabular-nums text-[#38bdf8]">
                   {settings.mouseSensitivity.toFixed(2)}x
                 </span>
               </div>
@@ -190,16 +196,16 @@ export function SettingsPanel({
                 onChange={(e) =>
                   onUpdateSettings({ mouseSensitivity: parseFloat(e.target.value) })
                 }
-                className="starfall-slider mt-1 w-full"
+                className="starfall-slider mt-1.5 w-full"
               />
             </div>
 
             <div>
               <div className="flex items-center justify-between text-xs">
-                <label htmlFor="setting-response-curve" className="font-medium text-slate-200">
-                  Response Curve
+                <label htmlFor="setting-response-curve" className="text-slate-300">
+                  Curve
                 </label>
-                <span className="font-mono tabular-nums text-cyan-300">
+                <span className="font-mono text-[11px] tabular-nums text-[#38bdf8]">
                   {settings.responseCurve.toFixed(2)}
                 </span>
               </div>
@@ -211,18 +217,18 @@ export function SettingsPanel({
                 step={0.05}
                 value={settings.responseCurve}
                 onChange={(e) => onUpdateSettings({ responseCurve: parseFloat(e.target.value) })}
-                className="starfall-slider mt-1 w-full"
+                className="starfall-slider mt-1.5 w-full"
               />
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3.5">
             <div>
               <div className="flex items-center justify-between text-xs">
-                <label htmlFor="setting-max-yaw" className="font-medium text-slate-200">
-                  Max Yaw Rate
+                <label htmlFor="setting-max-yaw" className="text-slate-300">
+                  Max Yaw
                 </label>
-                <span className="font-mono tabular-nums text-cyan-300">
+                <span className="font-mono text-[11px] tabular-nums text-[#38bdf8]">
                   {settings.maxYawRate.toFixed(1)} r/s
                 </span>
               </div>
@@ -234,16 +240,16 @@ export function SettingsPanel({
                 step={0.1}
                 value={settings.maxYawRate}
                 onChange={(e) => onUpdateSettings({ maxYawRate: parseFloat(e.target.value) })}
-                className="starfall-slider mt-1 w-full"
+                className="starfall-slider mt-1.5 w-full"
               />
             </div>
 
             <div>
               <div className="flex items-center justify-between text-xs">
-                <label htmlFor="setting-max-pitch" className="font-medium text-slate-200">
-                  Max Pitch Rate
+                <label htmlFor="setting-max-pitch" className="text-slate-300">
+                  Max Pitch
                 </label>
-                <span className="font-mono tabular-nums text-cyan-300">
+                <span className="font-mono text-[11px] tabular-nums text-[#38bdf8]">
                   {settings.maxPitchRate.toFixed(1)} r/s
                 </span>
               </div>
@@ -255,18 +261,18 @@ export function SettingsPanel({
                 step={0.1}
                 value={settings.maxPitchRate}
                 onChange={(e) => onUpdateSettings({ maxPitchRate: parseFloat(e.target.value) })}
-                className="starfall-slider mt-1 w-full"
+                className="starfall-slider mt-1.5 w-full"
               />
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3.5">
             <div>
               <div className="flex items-center justify-between text-xs">
-                <label htmlFor="setting-yaw-sens" className="font-medium text-slate-200">
-                  Yaw Balance
+                <label htmlFor="setting-yaw-sens" className="text-slate-300">
+                  Yaw Scale
                 </label>
-                <span className="font-mono tabular-nums text-cyan-300">
+                <span className="font-mono text-[11px] tabular-nums text-[#38bdf8]">
                   {settings.yawSensitivity.toFixed(2)}x
                 </span>
               </div>
@@ -280,16 +286,16 @@ export function SettingsPanel({
                 onChange={(e) =>
                   onUpdateSettings({ yawSensitivity: parseFloat(e.target.value) })
                 }
-                className="starfall-slider mt-1 w-full"
+                className="starfall-slider mt-1.5 w-full"
               />
             </div>
 
             <div>
               <div className="flex items-center justify-between text-xs">
-                <label htmlFor="setting-pitch-sens" className="font-medium text-slate-200">
-                  Pitch Balance
+                <label htmlFor="setting-pitch-sens" className="text-slate-300">
+                  Pitch Scale
                 </label>
-                <span className="font-mono tabular-nums text-cyan-300">
+                <span className="font-mono text-[11px] tabular-nums text-[#38bdf8]">
                   {settings.pitchSensitivity.toFixed(2)}x
                 </span>
               </div>
@@ -303,18 +309,18 @@ export function SettingsPanel({
                 onChange={(e) =>
                   onUpdateSettings({ pitchSensitivity: parseFloat(e.target.value) })
                 }
-                className="starfall-slider mt-1 w-full"
+                className="starfall-slider mt-1.5 w-full"
               />
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3.5">
             <div>
               <div className="flex items-center justify-between text-xs">
-                <label htmlFor="setting-input-smoothing" className="font-medium text-slate-200">
-                  Input Smoothing
+                <label htmlFor="setting-input-smoothing" className="text-slate-300">
+                  Smoothing
                 </label>
-                <span className="font-mono tabular-nums text-cyan-300">
+                <span className="font-mono text-[11px] tabular-nums text-[#38bdf8]">
                   {settings.inputSmoothing <= 0.001
                     ? 'Off'
                     : `${Math.round(settings.inputSmoothing * 100)}%`}
@@ -330,16 +336,16 @@ export function SettingsPanel({
                 onChange={(e) =>
                   onUpdateSettings({ inputSmoothing: parseFloat(e.target.value) })
                 }
-                className="starfall-slider mt-1 w-full"
+                className="starfall-slider mt-1.5 w-full"
               />
             </div>
 
             <div>
               <div className="flex items-center justify-between text-xs">
-                <label htmlFor="setting-joystick-radius" className="font-medium text-slate-200">
-                  Aim Boundary
+                <label htmlFor="setting-joystick-radius" className="text-slate-300">
+                  Aim Box
                 </label>
-                <span className="font-mono tabular-nums text-cyan-300">
+                <span className="font-mono text-[11px] tabular-nums text-[#38bdf8]">
                   {effectiveBoundaryW}%×{effectiveBoundaryH}%
                 </span>
               </div>
@@ -353,22 +359,22 @@ export function SettingsPanel({
                 onChange={(e) =>
                   onUpdateSettings({ joystickRadius: parseFloat(e.target.value) })
                 }
-                className="starfall-slider mt-1 w-full"
+                className="starfall-slider mt-1.5 w-full"
               />
             </div>
           </div>
 
-          <h3 className="pt-1 font-mono text-[11px] tracking-widest text-cyan-300">
-            CAMERA & AUDIO
+          <h3 className="border-t border-white/8 pt-3 font-mono text-[10px] uppercase tracking-[0.24em] text-[#38bdf8]">
+            Camera & Audio
           </h3>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3.5">
             <div>
               <div className="flex items-center justify-between text-xs">
-                <label htmlFor="setting-cam-dist" className="font-medium text-slate-200">
-                  Camera Distance
+                <label htmlFor="setting-cam-dist" className="text-slate-300">
+                  Distance
                 </label>
-                <span className="font-mono tabular-nums text-cyan-300">
+                <span className="font-mono text-[11px] tabular-nums text-[#38bdf8]">
                   {settings.cameraDistance.toFixed(1)} m
                 </span>
               </div>
@@ -380,16 +386,16 @@ export function SettingsPanel({
                 step={0.2}
                 value={settings.cameraDistance}
                 onChange={(e) => onUpdateSettings({ cameraDistance: parseFloat(e.target.value) })}
-                className="starfall-slider mt-1 w-full"
+                className="starfall-slider mt-1.5 w-full"
               />
             </div>
 
             <div>
               <div className="flex items-center justify-between text-xs">
-                <label htmlFor="setting-cam-sens" className="font-medium text-slate-200">
-                  Camera Follow
+                <label htmlFor="setting-cam-sens" className="text-slate-300">
+                  Follow
                 </label>
-                <span className="font-mono tabular-nums text-cyan-300">
+                <span className="font-mono text-[11px] tabular-nums text-[#38bdf8]">
                   {settings.cameraSensitivity.toFixed(2)}x
                 </span>
               </div>
@@ -403,14 +409,14 @@ export function SettingsPanel({
                 onChange={(e) =>
                   onUpdateSettings({ cameraSensitivity: parseFloat(e.target.value) })
                 }
-                className="starfall-slider mt-1 w-full"
+                className="starfall-slider mt-1.5 w-full"
               />
             </div>
           </div>
 
           <div>
             <div className="flex items-center justify-between text-xs">
-              <label htmlFor="setting-volume" className="font-medium text-slate-200">
+              <label htmlFor="setting-volume" className="text-slate-300">
                 Master Volume
               </label>
               <div className="flex items-center gap-2.5">
@@ -420,12 +426,12 @@ export function SettingsPanel({
                     AudioManager.unlock();
                     AudioManager.playUiClick('primary');
                   }}
-                  className="flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200"
+                  className="flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider text-[#38bdf8] hover:text-[#bae6fd]"
                 >
                   <Volume2 className="h-3 w-3" />
                   <span>Test</span>
                 </button>
-                <span className="font-mono tabular-nums text-cyan-300">
+                <span className="font-mono text-[11px] tabular-nums text-[#38bdf8]">
                   {Math.round(settings.masterVolume * 100)}%
                 </span>
               </div>
@@ -442,11 +448,11 @@ export function SettingsPanel({
                 onUpdateSettings({ masterVolume: v });
                 AudioManager.setMasterVolume(v);
               }}
-              className="starfall-slider mt-1 w-full"
+              className="starfall-slider mt-1.5 w-full"
             />
           </div>
 
-          <label className="flex cursor-pointer items-center justify-between border border-slate-800 bg-[#081226] px-3 py-2 text-xs text-slate-200">
+          <label className="obsidian-surface obsidian-surface-interactive flex cursor-pointer items-center justify-between px-3 py-2 text-xs text-slate-200">
             <span>Invert Pitch (Y-Axis)</span>
             <input
               type="checkbox"
@@ -455,14 +461,13 @@ export function SettingsPanel({
                 AudioManager.playUiClick('secondary');
                 onUpdateSettings({ invertY: e.target.checked });
               }}
-              className="h-4 w-4 accent-cyan-400"
+              className="h-3.5 w-3.5 accent-[#38bdf8]"
             />
           </label>
 
-          {/* Development-only performance monitor toggle (completely omitted in production) */}
           {import.meta.env.DEV && (
-            <label className="flex cursor-pointer items-center justify-between border border-cyan-500/30 bg-[#08142b] px-3 py-2 text-xs text-cyan-200">
-              <span>Dev Performance Monitor (F3)</span>
+            <label className="obsidian-surface obsidian-surface-interactive flex cursor-pointer items-center justify-between border-[#38bdf8]/35 px-3 py-2 text-xs text-[#bae6fd]">
+              <span>Dev Perf Monitor (F3)</span>
               <input
                 type="checkbox"
                 checked={settings.showPerfOverlay}
@@ -470,22 +475,22 @@ export function SettingsPanel({
                   AudioManager.playUiClick('secondary');
                   onUpdateSettings({ showPerfOverlay: e.target.checked });
                 }}
-                className="h-4 w-4 accent-cyan-400"
+                className="h-3.5 w-3.5 accent-[#38bdf8]"
               />
             </label>
           )}
         </div>
 
-        {/* Right Column: Adaptive Graphics Presets & Granular Controls */}
+        {/* Right Column: Graphics & Performance */}
         <div className="space-y-4">
-          <h3 className="font-mono text-[11px] tracking-widest text-cyan-300">
-            GRAPHICS & PERFORMANCE
+          <h3 className="font-mono text-[10px] uppercase tracking-[0.24em] text-[#38bdf8]">
+            Graphics
           </h3>
 
           {/* Overall Quality Preset */}
           <div>
-            <span className="text-xs font-medium text-slate-200">Quality Preset</span>
-            <div className="mt-1.5 grid grid-cols-4 border border-slate-700 bg-[#081226] p-1">
+            <span className="text-xs text-slate-300">Preset</span>
+            <div className="obsidian-surface mt-1.5 grid grid-cols-4 p-0.5">
               {QUALITY_OPTIONS.map((opt) => {
                 const active = settings.graphicsQuality === opt.value;
                 return (
@@ -496,8 +501,10 @@ export function SettingsPanel({
                       AudioManager.playUiClick('secondary');
                       onUpdateSettings(getGraphicsPresetPatch(opt.value));
                     }}
-                    className={`py-1.5 text-xs font-medium transition-colors ${
-                      active ? 'bg-cyan-500 text-slate-950' : 'text-slate-300 hover:text-cyan-200'
+                    className={`py-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors ${
+                      active
+                        ? 'bg-[#38bdf8]/20 font-semibold text-[#e0f2fe] ring-1 ring-inset ring-[#38bdf8]/75'
+                        : 'text-slate-400 hover:text-slate-100'
                     }`}
                   >
                     {opt.label}
@@ -510,10 +517,10 @@ export function SettingsPanel({
           {/* Resolution Scale */}
           <div>
             <div className="flex items-center justify-between text-xs">
-              <label htmlFor="setting-res-scale" className="font-medium text-slate-200">
+              <label htmlFor="setting-res-scale" className="text-slate-300">
                 Resolution Scale
               </label>
-              <span className="font-mono tabular-nums text-cyan-300">
+              <span className="font-mono text-[11px] tabular-nums text-[#38bdf8]">
                 {Math.round(settings.resolutionScale * 100)}%
               </span>
             </div>
@@ -531,8 +538,8 @@ export function SettingsPanel({
 
           {/* Shadow Quality */}
           <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-slate-200">Shadows</span>
-            <div className="flex border border-slate-700 bg-[#081226] p-0.5">
+            <span className="text-xs text-slate-300">Shadows</span>
+            <div className="obsidian-surface flex p-0.5">
               {SHADOW_OPTIONS.map((opt) => (
                 <button
                   key={opt.value}
@@ -541,10 +548,10 @@ export function SettingsPanel({
                     AudioManager.playUiClick('secondary');
                     onUpdateSettings({ shadowQuality: opt.value });
                   }}
-                  className={`px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                  className={`px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider transition-colors ${
                     settings.shadowQuality === opt.value
-                      ? 'bg-cyan-500 text-slate-950'
-                      : 'text-slate-300 hover:text-cyan-200'
+                      ? 'bg-[#38bdf8]/20 font-semibold text-[#e0f2fe] ring-1 ring-inset ring-[#38bdf8]/75'
+                      : 'text-slate-400 hover:text-slate-100'
                   }`}
                 >
                   {opt.label}
@@ -555,8 +562,8 @@ export function SettingsPanel({
 
           {/* Particle / Effect Quality */}
           <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-slate-200">Particle & VFX</span>
-            <div className="flex border border-slate-700 bg-[#081226] p-0.5">
+            <span className="text-xs text-slate-300">Particles</span>
+            <div className="obsidian-surface flex p-0.5">
               {EFFECT_OPTIONS.map((opt) => (
                 <button
                   key={opt.value}
@@ -565,10 +572,10 @@ export function SettingsPanel({
                     AudioManager.playUiClick('secondary');
                     onUpdateSettings({ particleQuality: opt.value });
                   }}
-                  className={`px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                  className={`px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider transition-colors ${
                     settings.particleQuality === opt.value
-                      ? 'bg-cyan-500 text-slate-950'
-                      : 'text-slate-300 hover:text-cyan-200'
+                      ? 'bg-[#38bdf8]/20 font-semibold text-[#e0f2fe] ring-1 ring-inset ring-[#38bdf8]/75'
+                      : 'text-slate-400 hover:text-slate-100'
                   }`}
                 >
                   {opt.label}
@@ -579,8 +586,8 @@ export function SettingsPanel({
 
           {/* Environment Detail */}
           <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-slate-200">Environment Detail</span>
-            <div className="flex border border-slate-700 bg-[#081226] p-0.5">
+            <span className="text-xs text-slate-300">Environment</span>
+            <div className="obsidian-surface flex p-0.5">
               {EFFECT_OPTIONS.map((opt) => (
                 <button
                   key={opt.value}
@@ -589,10 +596,10 @@ export function SettingsPanel({
                     AudioManager.playUiClick('secondary');
                     onUpdateSettings({ environmentDetail: opt.value });
                   }}
-                  className={`px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                  className={`px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider transition-colors ${
                     settings.environmentDetail === opt.value
-                      ? 'bg-cyan-500 text-slate-950'
-                      : 'text-slate-300 hover:text-cyan-200'
+                      ? 'bg-[#38bdf8]/20 font-semibold text-[#e0f2fe] ring-1 ring-inset ring-[#38bdf8]/75'
+                      : 'text-slate-400 hover:text-slate-100'
                   }`}
                 >
                   {opt.label}
@@ -604,10 +611,10 @@ export function SettingsPanel({
           {/* Draw Distance */}
           <div>
             <div className="flex items-center justify-between text-xs">
-              <label htmlFor="setting-draw-dist" className="font-medium text-slate-200">
+              <label htmlFor="setting-draw-dist" className="text-slate-300">
                 Draw Distance
               </label>
-              <span className="font-mono tabular-nums text-cyan-300">
+              <span className="font-mono text-[11px] tabular-nums text-[#38bdf8]">
                 {Math.round(settings.drawDistance)} m
               </span>
             </div>
@@ -624,8 +631,8 @@ export function SettingsPanel({
           </div>
 
           {/* Anti-Aliasing & Glow Toggles */}
-          <div className="grid grid-cols-2 gap-2">
-            <label className="flex cursor-pointer items-center justify-between border border-slate-800 bg-[#081226] px-2.5 py-2 text-[11px] text-slate-200">
+          <div className="grid grid-cols-2 gap-2.5">
+            <label className="obsidian-surface obsidian-surface-interactive flex cursor-pointer items-center justify-between px-3 py-2 text-[11px] text-slate-200">
               <span>Anti-Aliasing</span>
               <input
                 type="checkbox"
@@ -634,11 +641,11 @@ export function SettingsPanel({
                   AudioManager.playUiClick('secondary');
                   onUpdateSettings({ antialias: e.target.checked });
                 }}
-                className="h-3.5 w-3.5 accent-cyan-400"
+                className="h-3.5 w-3.5 accent-[#38bdf8]"
               />
             </label>
-            <label className="flex cursor-pointer items-center justify-between border border-slate-800 bg-[#081226] px-2.5 py-2 text-[11px] text-slate-200">
-              <span>Atmosphere Glow</span>
+            <label className="obsidian-surface obsidian-surface-interactive flex cursor-pointer items-center justify-between px-3 py-2 text-[11px] text-slate-200">
+              <span>Atmos Glow</span>
               <input
                 type="checkbox"
                 checked={settings.postGlowEnabled}
@@ -646,25 +653,26 @@ export function SettingsPanel({
                   AudioManager.playUiClick('secondary');
                   onUpdateSettings({ postGlowEnabled: e.target.checked });
                 }}
-                className="h-3.5 w-3.5 accent-cyan-400"
+                className="h-3.5 w-3.5 accent-[#38bdf8]"
               />
             </label>
           </div>
         </div>
       </div>
 
-      <div className="mt-6 flex justify-end border-t border-slate-800 pt-4">
+      <div className="mt-6 flex justify-end border-t border-white/10 pt-4">
         <button
           type="button"
+          onMouseEnter={() => AudioManager.playUiHover()}
           onClick={() => {
             AudioManager.playUiClick('primary');
             onClose();
           }}
-          className="bg-cyan-500 px-6 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-400 focus-visible:outline-2 focus-visible:outline-cyan-300 whitespace-nowrap shrink-0"
+          className="obsidian-cta-primary obsidian-scan shrink-0 whitespace-nowrap px-7 py-2.5 font-display text-xs font-bold uppercase tracking-[0.18em] text-[#e0f2fe] focus-visible:outline-2 focus-visible:outline-[#38bdf8]"
         >
           {closeLabel}
         </button>
       </div>
-    </div>
+    </motion.div>
   );
 }

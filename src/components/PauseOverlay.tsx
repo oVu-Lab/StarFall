@@ -1,8 +1,10 @@
 import { useState } from 'react';
+import { motion } from 'motion/react';
 import { Home, List, Play, RotateCcw, SlidersHorizontal } from 'lucide-react';
 import { AudioManager } from '../audio/AudioManager';
 import type { GameSettings } from '../types/game';
 import { SettingsPanel } from './SettingsPanel';
+import { ObsidianCorners, ObsidianEnergySpine, TECH_EASE } from './ui/ObsidianUI';
 
 interface PauseOverlayProps {
   missionLabel?: string;
@@ -27,35 +29,40 @@ export function PauseOverlay({
 
   if (showSettings) {
     return (
-      <div className="fixed inset-0 z-30 flex items-center justify-center bg-[#030712]/72 p-6">
+      <div className="fixed inset-0 z-30 flex items-center justify-center bg-[#02040a]/78 p-5 sm:p-6">
         <SettingsPanel
           settings={settings}
           onUpdateSettings={onUpdateSettings}
           onClose={() => setShowSettings(false)}
-          closeLabel="Back to Pause Menu"
+          closeLabel="Back"
         />
       </div>
     );
   }
 
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-[#030712]/72 p-6">
-      <div className="w-full max-w-sm border border-cyan-500/30 bg-[#050c1d]/96 p-7">
-        <div className="border-b border-slate-800 pb-4">
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-[#02040a]/75 p-6">
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.24, ease: TECH_EASE }}
+        className="obsidian-monolith obsidian-scan relative w-full max-w-xs overflow-hidden"
+      >
+        <ObsidianEnergySpine orientation="vertical" side="left" />
+        <ObsidianCorners />
+
+        <div className="border-b border-white/8 px-6 py-5">
           {missionLabel && (
-            <div className="font-mono text-[11px] tracking-wider text-cyan-300">
+            <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-[#38bdf8]">
               {missionLabel}
             </div>
           )}
-          <h2 className="mt-0.5 font-display text-2xl font-bold tracking-wider text-slate-100">
-            Flight Paused
+          <h2 className="mt-1 font-display text-2xl font-bold uppercase tracking-[0.14em] text-slate-50">
+            Paused
           </h2>
-          <p className="mt-1 text-xs text-slate-400">
-            Pointer Lock released. Resume to re-engage continuous mouse flight.
-          </p>
         </div>
 
-        <div className="mt-5 flex flex-col gap-2.5">
+        <div className="flex flex-col p-4 gap-2">
           <button
             type="button"
             onMouseEnter={() => AudioManager.playUiHover()}
@@ -64,10 +71,10 @@ export function PauseOverlay({
               AudioManager.playUiClick('primary');
               onResume();
             }}
-            className="flex items-center justify-center gap-2.5 bg-cyan-500 px-5 py-3 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-400 focus-visible:outline-2 focus-visible:outline-cyan-300"
+            className="obsidian-cta-primary obsidian-scan group flex items-center justify-center gap-2.5 px-5 py-3 font-display text-sm font-bold uppercase tracking-[0.18em] text-[#e0f2fe] focus-visible:outline-2 focus-visible:outline-[#38bdf8]"
           >
-            <Play className="h-4 w-4 fill-current" />
-            <span>Resume Flight</span>
+            <Play className="h-4 w-4 fill-[#38bdf8] text-[#38bdf8] transition-transform duration-150 group-hover:translate-x-0.5" />
+            <span>Resume</span>
           </button>
 
           <button
@@ -77,10 +84,13 @@ export function PauseOverlay({
               AudioManager.playUiClick('secondary');
               setShowSettings(true);
             }}
-            className="flex items-center justify-center gap-2.5 border border-slate-700 bg-[#081226] px-5 py-2.5 text-sm font-medium text-slate-200 transition-colors hover:border-cyan-400/60 hover:text-cyan-200"
+            className="obsidian-surface obsidian-surface-interactive flex items-center justify-between px-4 py-2.5 text-xs font-medium uppercase tracking-[0.14em] text-slate-200 hover:text-[#e0f2fe]"
           >
-            <SlidersHorizontal className="h-4 w-4 text-cyan-400" />
-            <span>Settings</span>
+            <span className="flex items-center gap-2.5 font-display">
+              <SlidersHorizontal className="h-3.5 w-3.5 text-[#38bdf8]" />
+              <span>Settings</span>
+            </span>
+            <span className="font-mono text-[10px] text-slate-500">SYS</span>
           </button>
 
           <button
@@ -90,10 +100,13 @@ export function PauseOverlay({
               AudioManager.playUiClick('secondary');
               onRestartMission();
             }}
-            className="flex items-center justify-center gap-2.5 border border-slate-700 bg-[#081226] px-5 py-2.5 text-sm font-medium text-slate-200 transition-colors hover:border-cyan-400/60 hover:text-cyan-200"
+            className="obsidian-surface obsidian-surface-interactive flex items-center justify-between px-4 py-2.5 text-xs font-medium uppercase tracking-[0.14em] text-slate-200 hover:text-[#e0f2fe]"
           >
-            <RotateCcw className="h-4 w-4 text-cyan-400" />
-            <span>Restart Mission</span>
+            <span className="flex items-center gap-2.5 font-display">
+              <RotateCcw className="h-3.5 w-3.5 text-[#38bdf8]" />
+              <span>Restart</span>
+            </span>
+            <span className="font-mono text-[10px] text-slate-500">OP</span>
           </button>
 
           <button
@@ -103,10 +116,13 @@ export function PauseOverlay({
               AudioManager.playUiClick('secondary');
               onMissionSelect();
             }}
-            className="flex items-center justify-center gap-2.5 border border-slate-700 bg-[#081226] px-5 py-2.5 text-sm font-medium text-slate-200 transition-colors hover:border-cyan-400/60 hover:text-cyan-200"
+            className="obsidian-surface obsidian-surface-interactive flex items-center justify-between px-4 py-2.5 text-xs font-medium uppercase tracking-[0.14em] text-slate-200 hover:text-[#e0f2fe]"
           >
-            <List className="h-4 w-4 text-cyan-400" />
-            <span>Mission Select</span>
+            <span className="flex items-center gap-2.5 font-display">
+              <List className="h-3.5 w-3.5 text-[#38bdf8]" />
+              <span>Operations</span>
+            </span>
+            <span className="font-mono text-[10px] text-slate-500">MAP</span>
           </button>
 
           <button
@@ -116,13 +132,13 @@ export function PauseOverlay({
               AudioManager.playUiClick('pause');
               onReturnToMenu();
             }}
-            className="flex items-center justify-center gap-2.5 border border-slate-800 bg-transparent px-5 py-2.5 text-sm font-medium text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-100"
+            className="mt-1 flex items-center justify-center gap-2 border-t border-white/8 pt-3 font-mono text-[11px] uppercase tracking-[0.18em] text-slate-400 transition-colors hover:text-slate-100"
           >
-            <Home className="h-4 w-4" />
+            <Home className="h-3.5 w-3.5" />
             <span>Main Menu</span>
           </button>
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 }

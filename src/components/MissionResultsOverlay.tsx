@@ -1,8 +1,24 @@
-import { ArrowRight, CheckCircle2, Home, List, RotateCcw, ShieldAlert } from 'lucide-react';
+import { motion } from 'motion/react';
+import {
+  ArrowRight,
+  CheckCircle2,
+  Coins,
+  Home,
+  List,
+  RotateCcw,
+  ShieldAlert,
+  Trophy,
+} from 'lucide-react';
 import { AudioManager } from '../audio/AudioManager';
 import { DIFFICULTY_PROFILES } from '../config/difficulty';
 import type { MissionRank } from '../types/game';
 import type { MissionResult } from '../types/mission';
+import {
+  ObsidianCorners,
+  ObsidianEnergySpine,
+  ObsidianGauge,
+  TECH_EASE,
+} from './ui/ObsidianUI';
 
 interface MissionResultsOverlayProps {
   result: MissionResult;
@@ -12,11 +28,11 @@ interface MissionResultsOverlayProps {
   onMainMenu: () => void;
 }
 
-const RANK_COLORS: Record<MissionRank, string> = {
-  S: 'border-cyan-400 bg-cyan-500/20 text-cyan-200',
-  A: 'border-sky-400 bg-sky-500/15 text-sky-200',
-  B: 'border-slate-400 bg-slate-700/35 text-slate-100',
-  C: 'border-amber-400 bg-amber-500/15 text-amber-200',
+const RANK_STYLE: Record<MissionRank, string> = {
+  S: 'border-[#38bdf8] text-[#bae6fd] shadow-[0_0_28px_rgba(56,189,248,0.28)]',
+  A: 'border-sky-400/80 text-sky-200 shadow-[0_0_20px_rgba(56,189,248,0.18)]',
+  B: 'border-slate-400/70 text-slate-100',
+  C: 'border-amber-400/80 text-amber-200',
 };
 
 function formatDuration(sec: number): string {
@@ -37,171 +53,243 @@ export function MissionResultsOverlay({
   const breakdown = result.scoreBreakdown;
 
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-[#030712]/84 p-5 overflow-y-auto">
-      <div className="w-full max-w-2xl border border-slate-700/90 bg-[#050c1d]/96 p-6 sm:p-8">
-        {/* Header Row */}
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-5">
+    <div className="fixed inset-0 z-30 flex items-center justify-center overflow-y-auto bg-[#02040a]/86 p-4 sm:p-6">
+      <motion.div
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, ease: TECH_EASE }}
+        className="obsidian-monolith obsidian-scroll relative max-h-[92vh] w-full max-w-2xl overflow-y-auto p-6 sm:p-7"
+      >
+        <ObsidianEnergySpine orientation="horizontal" />
+        <ObsidianCorners />
+
+        {/* Header + Dramatic Rank Crest */}
+        <div className="obsidian-scan relative flex flex-wrap items-center justify-between gap-4 overflow-hidden border-b border-white/10 pb-5">
           <div>
-            <div className="flex items-center gap-2 font-mono text-xs tracking-wider">
+            <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.24em]">
               {isVictory ? (
-                <CheckCircle2 className="h-4 w-4 text-cyan-400" />
+                <CheckCircle2 className="h-3.5 w-3.5 text-[#38bdf8]" />
               ) : (
-                <ShieldAlert className="h-4 w-4 text-red-400" />
+                <ShieldAlert className="h-3.5 w-3.5 text-rose-400" />
               )}
-              <span className={isVictory ? 'text-cyan-300' : 'text-red-400'}>
-                {isVictory ? 'MISSION COMPLETED' : 'MISSION FAILED'}
+              <span className={isVictory ? 'text-[#38bdf8]' : 'text-rose-400'}>
+                {isVictory ? 'Operation Cleared' : 'Operation Failed'}
               </span>
-              <span className="text-slate-600" aria-hidden="true">·</span>
+              <span className="text-slate-600">/</span>
               <span className="text-slate-400">
-                {DIFFICULTY_PROFILES[result.difficulty].label.toUpperCase()}
+                {DIFFICULTY_PROFILES[result.difficulty].label}
               </span>
             </div>
-            <h2 className="mt-1 font-display text-3xl font-bold tracking-wide text-slate-50">
+            <h2 className="mt-1 font-display text-2xl font-bold tracking-wider text-slate-50 sm:text-3xl">
               M-{String(result.missionNumber).padStart(2, '0')} · {result.missionName}
             </h2>
           </div>
 
           {isVictory && result.rank ? (
-            <div className="flex flex-col items-center">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.88 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.32, delay: 0.1, ease: TECH_EASE }}
+              className="flex flex-col items-center"
+            >
               <div
-                className={`flex h-16 w-16 items-center justify-center border-2 font-display text-4xl font-bold ${RANK_COLORS[result.rank]}`}
+                className={`obsidian-surface obsidian-scan flex h-16 w-16 items-center justify-center border-2 font-display text-4xl font-bold ${RANK_STYLE[result.rank]}`}
               >
                 {result.rank}
               </div>
-              <span className="mt-1 font-mono text-[10px] tracking-widest text-slate-400">
-                {result.isNewBestRank ? 'NEW BEST RANK' : 'FINAL RANK'}
+              <span className="mt-1.5 font-mono text-[9px] uppercase tracking-[0.22em] text-slate-400">
+                {result.isNewBestRank ? 'New Best' : 'Rank'}
               </span>
-            </div>
+            </motion.div>
           ) : (
-            <div className="border border-red-500/50 bg-red-950/40 px-4 py-2 font-display text-lg font-bold tracking-wider text-red-300">
-              {result.transportRemainingHullPct === 0 ? 'TRANSPORT LOST' : 'HULL LOST'}
+            <div className="obsidian-surface border-rose-500/60 px-4 py-2 font-display text-base font-bold uppercase tracking-[0.16em] text-rose-300">
+              {result.transportRemainingHullPct === 0 ? 'Transport Lost' : 'Hull Lost'}
             </div>
           )}
         </div>
 
-        {/* Unlock Notification Banner */}
+        {/* Next Operation Unlock Strip */}
         {isVictory && result.unlockedNextMissionName && (
-          <div className="mt-4 flex items-center justify-between border border-cyan-500/40 bg-cyan-950/35 px-4 py-2.5 text-xs text-cyan-200">
-            <span>Next Operation Unlocked: <strong>{result.unlockedNextMissionName}</strong></span>
-            <span className="font-mono text-[11px] text-cyan-300">READY</span>
-          </div>
+          <motion.div
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.24, delay: 0.08, ease: TECH_EASE }}
+            className="obsidian-surface obsidian-scan mt-4 flex items-center justify-between border-l-2 border-l-[#38bdf8] px-4 py-2.5 font-mono text-xs text-[#bae6fd]"
+          >
+            <span>
+              UNLOCKED // <strong className="text-slate-50">{result.unlockedNextMissionName}</strong>
+            </span>
+            <span className="text-[10px] tracking-[0.2em] text-[#38bdf8]">READY</span>
+          </motion.div>
         )}
 
-        {/* Primary Telemetry Stats Grid */}
-        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className="border border-slate-800 bg-[#081226] px-3.5 py-3">
-            <div className="text-[11px] text-slate-400">Enemies Defeated</div>
-            <div className="mt-1 font-mono text-base font-semibold text-slate-100">
-              {result.enemiesDefeated} / {result.totalEnemies}
+        {/* Inline Telemetry Readout Strip (No boxed dashboard cards) */}
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.24, delay: 0.06, ease: TECH_EASE }}
+          className={`mt-5 grid grid-cols-2 gap-4 border-y border-white/8 py-3.5 font-mono ${
+            result.transportRemainingHullPct != null ? 'sm:grid-cols-5' : 'sm:grid-cols-4'
+          }`}
+        >
+          <div>
+            <div className="text-[9px] uppercase tracking-[0.2em] text-slate-500">Hostiles</div>
+            <div className="mt-1 text-base font-semibold tabular-nums text-slate-100">
+              {result.enemiesDefeated}/{result.totalEnemies}
             </div>
           </div>
+
           {result.transportRemainingHullPct != null && (
-            <div className="border border-amber-700/50 bg-[#17130a] px-3.5 py-3">
-              <div className="text-[11px] text-amber-300/80">Transport Hull</div>
-              <div className="mt-1 font-mono text-base font-semibold text-amber-200">
-                {result.transportRemainingHullPct}% remaining
+            <div>
+              <div className="text-[9px] uppercase tracking-[0.2em] text-amber-300/80">Transport</div>
+              <div className="mt-1 text-base font-semibold tabular-nums text-amber-200">
+                {result.transportRemainingHullPct}%
               </div>
-              <div className="font-mono text-[10px] text-slate-500">
-                {result.status === 'completed' ? 'Reached extraction' : 'Lost before extraction'}
+              <div className="text-[9px] text-slate-500">
+                {result.status === 'completed' ? 'EXTRACTED' : 'LOST'}
               </div>
             </div>
           )}
-          <div className="border border-slate-800 bg-[#081226] px-3.5 py-3">
-            <div className="text-[11px] text-slate-400">Accuracy</div>
-            <div className="mt-1 font-mono text-base font-semibold text-cyan-300">
+
+          <div>
+            <div className="text-[9px] uppercase tracking-[0.2em] text-slate-500">Accuracy</div>
+            <div className="mt-1 text-base font-semibold tabular-nums text-[#38bdf8]">
               {result.accuracyPct}%
             </div>
-            <div className="font-mono text-[10px] text-slate-500">
-              {result.shotsHit} / {result.shotsFired} hits
+            <div className="text-[9px] tabular-nums text-slate-500">
+              {result.shotsHit}/{result.shotsFired} HITS
             </div>
           </div>
-          <div className="border border-slate-800 bg-[#081226] px-3.5 py-3">
-            <div className="text-[11px] text-slate-400">Time Taken</div>
-            <div className="mt-1 font-mono text-base font-semibold text-slate-100">
+
+          <div>
+            <div className="text-[9px] uppercase tracking-[0.2em] text-slate-500">Time</div>
+            <div className="mt-1 text-base font-semibold tabular-nums text-slate-100">
               {formatDuration(result.timeTakenSec)}
             </div>
           </div>
-          <div className="border border-slate-800 bg-[#081226] px-3.5 py-3">
-            <div className="text-[11px] text-slate-400">Damage Received</div>
-            <div className="mt-1 font-mono text-base font-semibold text-orange-300">
+
+          <div>
+            <div className="text-[9px] uppercase tracking-[0.2em] text-slate-500">Damage</div>
+            <div className="mt-1 text-base font-semibold tabular-nums text-amber-300">
               {result.damageReceived}
             </div>
-            <div className="font-mono text-[10px] text-slate-500">
-              Hull {result.remainingHullPct}%
+            <div className="text-[9px] tabular-nums text-slate-500">
+              HULL {result.remainingHullPct}%
             </div>
           </div>
-        </div>
+        </motion.div>
 
+        {/* Credits & Achievement Rewards */}
         {result.rewardSummary && (
-          <div className="mt-4 border border-cyan-900/70 bg-[#071022] p-4">
-            <div className="flex items-baseline justify-between">
-              <span className="font-mono text-xs tracking-wider text-slate-400">CREDITS EARNED</span>
-              <span className="font-mono text-lg font-bold text-cyan-200">+{result.rewardSummary.creditsEarned} CR</span>
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.26, delay: 0.12, ease: TECH_EASE }}
+            className="obsidian-surface obsidian-scan mt-4 border-l-2 border-l-[#38bdf8] p-4"
+          >
+            <div className="flex items-baseline justify-between gap-3 font-mono">
+              <span className="flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-slate-400">
+                <Coins className="h-3.5 w-3.5 text-[#38bdf8]" />
+                <span>Credits Earned</span>
+              </span>
+              <div className="flex items-baseline gap-3">
+                <span className="text-lg font-bold tabular-nums text-[#38bdf8]">
+                  +{result.rewardSummary.creditsEarned.toLocaleString()} CR
+                </span>
+                <span className="text-[11px] tabular-nums text-slate-400">
+                  BAL {result.rewardSummary.creditsBalance.toLocaleString()} CR
+                </span>
+              </div>
             </div>
-            <div className="mt-1 text-xs text-slate-400">Balance: {result.rewardSummary.creditsBalance} CR</div>
-            {result.rewardSummary.creditsEarned > 0 && <div className="mt-3 space-y-1 text-xs text-slate-300">
-              {result.rewardSummary.firstClear > 0 && <div>First clear <span className="float-right">+{result.rewardSummary.firstClear} CR</span></div>}
-              {result.rewardSummary.rankImprovement > 0 && <div>Rank reward <span className="float-right">+{result.rewardSummary.rankImprovement} CR</span></div>}
-              {result.rewardSummary.optionalRewards.map((reward) => <div key={reward.id}>Optional objective <span className="float-right">+{reward.credits} CR</span></div>)}
-              {result.rewardSummary.achievementRewards.map((reward) => <div key={reward.id}>{reward.name} <span className="float-right">+{reward.credits} CR</span></div>)}
-            </div>}
-          </div>
+
+            {result.rewardSummary.creditsEarned > 0 && (
+              <div className="mt-3 space-y-1.5 border-t border-white/8 pt-2.5 font-mono text-[11px] text-slate-300">
+                {result.rewardSummary.firstClear > 0 && (
+                  <div className="flex justify-between">
+                    <span>First Clear</span>
+                    <span className="tabular-nums text-[#bae6fd]">
+                      +{result.rewardSummary.firstClear} CR
+                    </span>
+                  </div>
+                )}
+                {result.rewardSummary.rankImprovement > 0 && (
+                  <div className="flex justify-between">
+                    <span>Rank Bonus</span>
+                    <span className="tabular-nums text-[#bae6fd]">
+                      +{result.rewardSummary.rankImprovement} CR
+                    </span>
+                  </div>
+                )}
+                {result.rewardSummary.optionalRewards.map((reward) => (
+                  <div key={reward.id} className="flex justify-between">
+                    <span>Optional Objective</span>
+                    <span className="tabular-nums text-[#bae6fd]">+{reward.credits} CR</span>
+                  </div>
+                ))}
+                {result.rewardSummary.achievementRewards.map((reward) => (
+                  <div key={reward.id} className="flex items-center justify-between text-amber-200">
+                    <span className="flex items-center gap-1.5">
+                      <Trophy className="h-3 w-3 text-amber-400" />
+                      <span>{reward.name}</span>
+                    </span>
+                    <span className="tabular-nums text-amber-300">+{reward.credits} CR</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </motion.div>
         )}
 
-        {/* Deterministic Score Breakdown */}
-        <div className="mt-5 border border-slate-800 bg-[#071022] p-4">
-          <div className="flex items-baseline justify-between">
-            <span className="font-mono text-xs tracking-wider text-slate-400">
-              PERFORMANCE BREAKDOWN
+        {/* Compact Score Breakdown Gauges */}
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.26, delay: 0.16, ease: TECH_EASE }}
+          className="mt-5"
+        >
+          <div className="flex items-baseline justify-between font-mono">
+            <span className="text-[10px] uppercase tracking-[0.22em] text-slate-400">
+              Score Breakdown
             </span>
-            <span className="font-mono text-sm font-bold text-cyan-300">
-              {breakdown.totalScore} / 1000 PTS
+            <span className="text-sm font-bold tabular-nums text-[#38bdf8]">
+              {breakdown.totalScore} / 1000
             </span>
           </div>
-          <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2.5 text-xs sm:grid-cols-5">
-            <div><div className="flex justify-between text-slate-400"><span>Required</span><span className="font-mono text-slate-200">{breakdown.requiredObjectiveScore}/400</span></div><div className="mt-1 h-1.5 bg-slate-800"><div className="h-full bg-cyan-400" style={{ width: `${breakdown.requiredObjectiveScore / 4}%` }} /></div></div>
-            <div><div className="flex justify-between text-slate-400"><span>Optional</span><span className="font-mono text-slate-200">{breakdown.optionalObjectiveScore}/200</span></div><div className="mt-1 h-1.5 bg-slate-800"><div className="h-full bg-sky-400" style={{ width: `${breakdown.optionalObjectiveScore / 2}%` }} /></div></div>
-            <div>
-              <div className="flex justify-between text-slate-400">
-                <span>Combat</span>
-                <span className="font-mono text-slate-200">{breakdown.combatScore}/100</span>
-              </div>
-              <div className="mt-1 h-1.5 bg-slate-800">
-                <div
-                  className="h-full bg-cyan-400"
-                  style={{ width: `${breakdown.combatScore}%` }}
-                />
-              </div>
-            </div>
-            <div>
-              <div className="flex justify-between text-slate-400">
-                <span>Survival</span>
-                <span className="font-mono text-slate-200">{breakdown.survivalScore}/200</span>
-              </div>
-              <div className="mt-1 h-1.5 bg-slate-800">
-                <div
-                  className="h-full bg-emerald-400"
-                  style={{ width: `${(breakdown.survivalScore / 200) * 100}%` }}
-                />
-              </div>
-            </div>
-            <div>
-              <div className="flex justify-between text-slate-400">
-                <span>Performance</span>
-                <span className="font-mono text-slate-200">{breakdown.timeScore}/100</span>
-              </div>
-              <div className="mt-1 h-1.5 bg-slate-800">
-                <div
-                  className="h-full bg-amber-400"
-                  style={{ width: `${breakdown.timeScore}%` }}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
 
-        {/* Action Buttons */}
-        <div className="mt-6 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+          <div className="mt-3 grid grid-cols-2 gap-x-5 gap-y-3 sm:grid-cols-5">
+            <ObsidianGauge
+              label="Primary"
+              valueText={`${breakdown.requiredObjectiveScore}/400`}
+              percent={breakdown.requiredObjectiveScore / 4}
+            />
+            <ObsidianGauge
+              label="Optional"
+              valueText={`${breakdown.optionalObjectiveScore}/200`}
+              percent={breakdown.optionalObjectiveScore / 2}
+              accentClass="from-sky-600 via-sky-400 to-sky-200"
+            />
+            <ObsidianGauge
+              label="Combat"
+              valueText={`${breakdown.combatScore}/100`}
+              percent={breakdown.combatScore}
+            />
+            <ObsidianGauge
+              label="Survival"
+              valueText={`${breakdown.survivalScore}/200`}
+              percent={(breakdown.survivalScore / 200) * 100}
+              accentClass="from-emerald-600 via-emerald-400 to-emerald-200"
+            />
+            <ObsidianGauge
+              label="Speed"
+              valueText={`${breakdown.timeScore}/100`}
+              percent={breakdown.timeScore}
+              accentClass="from-amber-600 via-amber-400 to-amber-200"
+            />
+          </div>
+        </motion.div>
+
+        {/* Action Controls */}
+        <div className="mt-6 grid grid-cols-1 gap-2.5 border-t border-white/8 pt-5 sm:grid-cols-2">
           {isVictory && onNextMission && (
             <button
               type="button"
@@ -211,10 +299,10 @@ export function MissionResultsOverlay({
                 AudioManager.playUiClick('primary');
                 onNextMission();
               }}
-              className="flex items-center justify-center gap-2 bg-cyan-500 px-5 py-3 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-400 sm:col-span-2"
+              className="obsidian-cta-primary obsidian-scan group flex items-center justify-center gap-2 px-5 py-3 font-display text-sm font-bold uppercase tracking-[0.18em] text-[#e0f2fe] sm:col-span-2"
             >
-              <span>Next Mission</span>
-              <ArrowRight className="h-4 w-4" />
+              <span>Next Operation</span>
+              <ArrowRight className="h-4 w-4 text-[#38bdf8] transition-transform duration-150 group-hover:translate-x-0.5" />
             </button>
           )}
 
@@ -226,14 +314,14 @@ export function MissionResultsOverlay({
               AudioManager.playUiClick(isVictory ? 'secondary' : 'primary');
               onRetryMission();
             }}
-            className={`flex items-center justify-center gap-2 px-5 py-3 text-sm font-semibold transition-colors ${
+            className={`flex items-center justify-center gap-2 px-5 py-2.5 font-display text-xs font-bold uppercase tracking-[0.16em] ${
               isVictory && onNextMission
-                ? 'border border-slate-700 bg-[#081226] text-slate-100 hover:border-cyan-400/60 hover:text-cyan-200'
-                : 'bg-cyan-500 text-slate-950 hover:bg-cyan-400 sm:col-span-2'
+                ? 'obsidian-surface obsidian-surface-interactive text-slate-200 hover:text-[#e0f2fe]'
+                : 'obsidian-cta-primary obsidian-scan text-[#e0f2fe] sm:col-span-2'
             }`}
           >
-            <RotateCcw className="h-4 w-4" />
-            <span>Retry Mission</span>
+            <RotateCcw className="h-3.5 w-3.5 text-[#38bdf8]" />
+            <span>Retry</span>
           </button>
 
           <button
@@ -243,10 +331,10 @@ export function MissionResultsOverlay({
               AudioManager.playUiClick('secondary');
               onMissionSelect();
             }}
-            className="flex items-center justify-center gap-2 border border-slate-700 bg-[#081226] px-5 py-2.5 text-sm font-medium text-slate-200 transition-colors hover:border-cyan-400/60 hover:text-cyan-200"
+            className="obsidian-surface obsidian-surface-interactive flex items-center justify-center gap-2 px-5 py-2.5 font-display text-xs font-semibold uppercase tracking-[0.16em] text-slate-200 hover:text-[#e0f2fe]"
           >
-            <List className="h-4 w-4 text-cyan-400" />
-            <span>Mission Select</span>
+            <List className="h-3.5 w-3.5 text-[#38bdf8]" />
+            <span>Operations</span>
           </button>
 
           <button
@@ -256,13 +344,13 @@ export function MissionResultsOverlay({
               AudioManager.playUiClick('secondary');
               onMainMenu();
             }}
-            className="flex items-center justify-center gap-2 border border-slate-800 bg-transparent px-5 py-2.5 text-sm font-medium text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-100 sm:col-span-2"
+            className="flex items-center justify-center gap-2 pt-1.5 font-mono text-[11px] uppercase tracking-[0.18em] text-slate-400 transition-colors hover:text-slate-100 sm:col-span-2"
           >
-            <Home className="h-4 w-4" />
+            <Home className="h-3.5 w-3.5" />
             <span>Main Menu</span>
           </button>
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 }

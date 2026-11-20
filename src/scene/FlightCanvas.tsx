@@ -80,20 +80,23 @@ export function FlightCanvas({
 
   if (contextLost) {
     return (
-      <div className="fixed inset-0 flex items-center justify-center bg-[#030712] text-slate-200">
-        <div className="max-w-md border border-cyan-500/30 bg-[#071124] px-8 py-6 text-center">
-          <h2 className="font-display text-xl font-semibold tracking-wider text-cyan-300">
-            Graphics Context Interrupted
+      <div className="fixed inset-0 flex items-center justify-center bg-[#02040a] p-6 text-slate-200">
+        <div className="obsidian-monolith obsidian-scan relative max-w-md overflow-hidden px-8 py-6 text-center">
+          <span className="font-mono text-[10px] uppercase tracking-[0.26em] text-amber-400">
+            WebGL Signal Lost
+          </span>
+          <h2 className="mt-1 font-display text-xl font-bold uppercase tracking-wider text-slate-50">
+            Graphics Interrupted
           </h2>
-          <p className="mt-2 text-sm text-slate-400">
-            WebGL rendering was temporarily suspended by the browser. Reload the page to restore the 3D viewport.
+          <p className="mt-2 text-xs text-slate-400">
+            WebGL rendering was suspended by the browser. Reload to restore the viewport.
           </p>
           <button
             type="button"
             onClick={() => window.location.reload()}
-            className="mt-5 bg-cyan-500 px-5 py-2 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-400"
+            className="obsidian-cta-primary mt-5 px-6 py-2.5 font-display text-xs font-bold uppercase tracking-[0.18em] text-[#e0f2fe]"
           >
-            Reload Simulation
+            Reload
           </button>
         </div>
       </div>

@@ -478,7 +478,10 @@ export default function App() {
 
       {/* Semantic UI Overlays */}
       {campaignSaveError && (
-        <div role="status" className="absolute left-1/2 top-4 z-50 w-[min(92vw,42rem)] -translate-x-1/2 rounded border border-amber-400/50 bg-slate-950/95 px-4 py-3 text-sm text-amber-100 shadow-xl">
+        <div
+          role="status"
+          className="obsidian-surface obsidian-scan fixed left-1/2 top-4 z-50 w-[min(92vw,38rem)] -translate-x-1/2 border-l-2 border-l-amber-400 px-4 py-2.5 font-mono text-xs text-amber-200 shadow-2xl"
+        >
           {campaignSaveError.message}
         </div>
       )}
