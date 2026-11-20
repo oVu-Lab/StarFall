@@ -8,6 +8,13 @@ export interface HullTextureBundle {
   hullBump: THREE.CanvasTexture;
 }
 
+export interface VanguardTextureBundle {
+  armorAlbedo: THREE.CanvasTexture;
+  armorRoughness: THREE.CanvasTexture;
+  armorBump: THREE.CanvasTexture;
+  titaniumRoughness: THREE.CanvasTexture;
+}
+
 export interface EnvironmentTextureBundle {
   themeId: string;
   resolution: number;
@@ -173,6 +180,39 @@ class AssetManagerImpl {
   }
 
   public releaseHullTextures(key: string): void {
+    this.release(key);
+  }
+
+  /**
+   * Acquires high-craft procedural military aerospace PBR maps for the VX-9 Vanguard.
+   * Reference-counted and cached by resolution so hangar/gameplay share GPU textures cleanly.
+   */
+  public acquireVanguardTextures(resolution: 256 | 512 | 1024 = 512): {
+    key: string;
+    bundle: VanguardTextureBundle;
+  } {
+    const texSize = resolution === 256 ? 512 : 1024;
+    const key = `ship:vanguardPbr:${texSize}`;
+    const bundle = this.acquire<VanguardTextureBundle>(
+      key,
+      'ship',
+      () => ({
+        armorAlbedo: this.createVanguardAlbedoTexture(texSize),
+        armorRoughness: this.createVanguardRoughnessTexture(texSize),
+        armorBump: this.createVanguardBumpTexture(texSize),
+        titaniumRoughness: this.createBrushedMetalRoughnessTexture(Math.max(256, texSize >> 1)),
+      }),
+      (b) => {
+        b.armorAlbedo.dispose();
+        b.armorRoughness.dispose();
+        b.armorBump.dispose();
+        b.titaniumRoughness.dispose();
+      },
+    );
+    return { key, bundle };
+  }
+
+  public releaseVanguardTextures(key: string): void {
     this.release(key);
   }
 
@@ -450,6 +490,260 @@ class AssetManagerImpl {
     ctx.strokeRect(64 * s, 56 * s, 48 * s, 32 * s);
     ctx.strokeRect(320 * s, 310 * s, 68 * s, 42 * s);
 
+    return this.createTextureFromCanvas(canvas, false, 2, 2);
+  }
+
+  /**
+   * High-precision military spacecraft armor albedo map with layered stealth armor plates,
+   * chamfered panel seams, maintenance hatches, louver grilles, and micro-fastener detailing.
+   */
+  private createVanguardAlbedoTexture(size: number): THREE.CanvasTexture {
+    const { canvas, ctx } = this.createCanvas(size, size);
+    if (!ctx) return this.createTextureFromCanvas(canvas, true, 1, 1);
+
+    const s = size / 1024;
+
+    // Neutral-cool metallic satin base so PBR material tint preserves accurate military slate-navy
+    ctx.fillStyle = '#bcc6d4';
+    ctx.fillRect(0, 0, size, size);
+
+    // Subtle directional rolled-alloy micro-grain (anisotropic longitudinal sheen)
+    for (let y = 0; y < size; y += Math.max(1, Math.round(2 * s))) {
+      const n = Math.sin(y * 0.41) * 4 + Math.cos(y * 1.13) * 3 + Math.sin(y * 3.7) * 2;
+      const v = Math.round(186 + n);
+      ctx.fillStyle = `rgb(${v - 4}, ${v}, ${v + 7})`;
+      ctx.fillRect(0, y, size, Math.max(1, Math.round(2 * s)));
+    }
+
+    // Engineered interlocking military armor panel layout (varying subtle value contrast)
+    const armorPlates: Array<[number, number, number, number, string]> = [
+      [16, 16, 468, 224, 'rgba(255,255,255,0.065)'],
+      [500, 16, 508, 296, 'rgba(15,23,42,0.085)'],
+      [16, 256, 296, 332, 'rgba(15,23,42,0.055)'],
+      [328, 256, 156, 332, 'rgba(255,255,255,0.04)'],
+      [500, 328, 260, 260, 'rgba(255,255,255,0.055)'],
+      [776, 328, 232, 260, 'rgba(15,23,42,0.095)'],
+      [16, 604, 468, 196, 'rgba(255,255,255,0.05)'],
+      [500, 604, 508, 196, 'rgba(15,23,42,0.065)'],
+      [16, 816, 340, 192, 'rgba(15,23,42,0.08)'],
+      [372, 816, 636, 192, 'rgba(255,255,255,0.045)'],
+    ];
+
+    for (const [x, y, w, h, fill] of armorPlates) {
+      ctx.fillStyle = fill;
+      ctx.fillRect(x * s, y * s, w * s, h * s);
+
+      // Subtle beveled top-left catchlight edge
+      ctx.strokeStyle = 'rgba(241, 245, 249, 0.28)';
+      ctx.lineWidth = Math.max(1, 1.5 * s);
+      ctx.beginPath();
+      ctx.moveTo((x + 2) * s, (y + h - 2) * s);
+      ctx.lineTo((x + 2) * s, (y + 2) * s);
+      ctx.lineTo((x + w - 2) * s, (y + 2) * s);
+      ctx.stroke();
+
+      // Deep dark panel seam groove
+      ctx.strokeStyle = 'rgba(8, 13, 24, 0.62)';
+      ctx.lineWidth = Math.max(1, 2.4 * s);
+      ctx.strokeRect(x * s, y * s, w * s, h * s);
+
+      // Corner structural Torx fasteners
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.45)';
+      const inset = 12 * s;
+      const r = Math.max(1, 2.1 * s);
+      const corners: Array<[number, number]> = [
+        [x * s + inset, y * s + inset],
+        [(x + w) * s - inset, y * s + inset],
+        [x * s + inset, (y + h) * s - inset],
+        [(x + w) * s - inset, (y + h) * s - inset],
+      ];
+      for (const [cx, cy] of corners) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Chamfered avionics access hatches & recessed louver vent arrays
+    const hatches: Array<[number, number, number, number]> = [
+      [88, 72, 132, 86],
+      [612, 88, 164, 112],
+      [556, 396, 148, 108],
+      [120, 654, 180, 92],
+      [690, 862, 190, 96],
+    ];
+    for (const [x, y, w, h] of hatches) {
+      const c = 12 * s;
+      ctx.beginPath();
+      ctx.moveTo((x + c / s) * s, y * s);
+      ctx.lineTo((x + w - c / s) * s, y * s);
+      ctx.lineTo((x + w) * s, (y + c / s) * s);
+      ctx.lineTo((x + w) * s, (y + h - c / s) * s);
+      ctx.lineTo((x + w - c / s) * s, (y + h) * s);
+      ctx.lineTo((x + c / s) * s, (y + h) * s);
+      ctx.lineTo(x * s, (y + h - c / s) * s);
+      ctx.lineTo(x * s, (y + c / s) * s);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.09)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(10, 16, 28, 0.55)';
+      ctx.lineWidth = Math.max(1, 2 * s);
+      ctx.stroke();
+
+      // Subtle micro-technical latch tick marks
+      ctx.fillStyle = 'rgba(226, 232, 240, 0.32)';
+      ctx.fillRect((x + 18) * s, (y + 10) * s, 18 * s, 3 * s);
+      ctx.fillRect((x + w - 36) * s, (y + h - 13) * s, 18 * s, 3 * s);
+    }
+
+    // Precision heat-dissipation louver slits
+    const ventBlocks: Array<[number, number, number, number, number]> = [
+      [352, 310, 108, 12, 8],
+      [818, 376, 146, 11, 9],
+      [548, 646, 168, 10, 7],
+    ];
+    for (const [vx, vy, vw, stepY, count] of ventBlocks) {
+      for (let i = 0; i < count; i++) {
+        const ly = (vy + i * stepY) * s;
+        ctx.fillStyle = 'rgba(7, 11, 20, 0.62)';
+        ctx.fillRect(vx * s, ly, vw * s, Math.max(1.5, 4.5 * s));
+        ctx.fillStyle = 'rgba(226, 232, 240, 0.22)';
+        ctx.fillRect(vx * s, ly + Math.max(1.5, 4.5 * s), vw * s, Math.max(1, 1.5 * s));
+      }
+    }
+
+    // Crisp diagonal stealth joint seams
+    ctx.strokeStyle = 'rgba(9, 14, 26, 0.5)';
+    ctx.lineWidth = Math.max(1, 2 * s);
+    ctx.beginPath();
+    ctx.moveTo(312 * s, 16 * s);
+    ctx.lineTo(356 * s, 240 * s);
+    ctx.moveTo(740 * s, 604 * s);
+    ctx.lineTo(796 * s, 800 * s);
+    ctx.stroke();
+
+    return this.createTextureFromCanvas(canvas, true, 1, 1);
+  }
+
+  private createVanguardRoughnessTexture(size: number): THREE.CanvasTexture {
+    const { canvas, ctx } = this.createCanvas(size, size);
+    if (!ctx) return this.createTextureFromCanvas(canvas, false, 1, 1);
+
+    const s = size / 1024;
+    ctx.fillStyle = '#626262';
+    ctx.fillRect(0, 0, size, size);
+
+    // Varying satin-vs-matte military coating per armor plate for authentic specular breakup
+    const plateRoughness: Array<[number, number, number, number, string]> = [
+      [16, 16, 468, 224, '#4e4e4e'],
+      [500, 16, 508, 296, '#707070'],
+      [16, 256, 296, 332, '#5c5c5c'],
+      [328, 256, 156, 332, '#464646'],
+      [500, 328, 260, 260, '#525252'],
+      [776, 328, 232, 260, '#787878'],
+      [16, 604, 468, 196, '#505050'],
+      [500, 604, 508, 196, '#686868'],
+      [16, 816, 340, 192, '#6e6e6e'],
+      [372, 816, 636, 192, '#4c4c4c'],
+    ];
+    for (const [x, y, w, h, col] of plateRoughness) {
+      ctx.fillStyle = col;
+      ctx.fillRect(x * s, y * s, w * s, h * s);
+      // Slight metallic edge wear (glossier rim)
+      ctx.strokeStyle = '#363636';
+      ctx.lineWidth = Math.max(1, 4 * s);
+      ctx.strokeRect((x + 3) * s, (y + 3) * s, (w - 6) * s, (h - 6) * s);
+      // Matte carbon-shadowed panel groove
+      ctx.strokeStyle = '#c8c8c8';
+      ctx.lineWidth = Math.max(1, 3 * s);
+      ctx.strokeRect(x * s, y * s, w * s, h * s);
+    }
+
+    return this.createTextureFromCanvas(canvas, false, 1, 1);
+  }
+
+  private createVanguardBumpTexture(size: number): THREE.CanvasTexture {
+    const { canvas, ctx } = this.createCanvas(size, size);
+    if (!ctx) return this.createTextureFromCanvas(canvas, false, 1, 1);
+
+    const s = size / 1024;
+    ctx.fillStyle = '#808080';
+    ctx.fillRect(0, 0, size, size);
+
+    // Subtle elevation steps between overlapping armor plates
+    const heights: Array<[number, number, number, number, string]> = [
+      [16, 16, 468, 224, '#8b8b8b'],
+      [500, 16, 508, 296, '#7a7a7a'],
+      [328, 256, 156, 332, '#8d8d8d'],
+      [500, 328, 260, 260, '#888888'],
+      [16, 604, 468, 196, '#898989'],
+      [372, 816, 636, 192, '#868686'],
+    ];
+    for (const [x, y, w, h, fill] of heights) {
+      ctx.fillStyle = fill;
+      ctx.fillRect(x * s, y * s, w * s, h * s);
+    }
+
+    // Crisp recessed seams
+    const rects: Array<[number, number, number, number]> = [
+      [16, 16, 468, 224],
+      [500, 16, 508, 296],
+      [16, 256, 296, 332],
+      [328, 256, 156, 332],
+      [500, 328, 260, 260],
+      [776, 328, 232, 260],
+      [16, 604, 468, 196],
+      [500, 604, 508, 196],
+      [16, 816, 340, 192],
+      [372, 816, 636, 192],
+    ];
+    ctx.strokeStyle = '#181818';
+    ctx.lineWidth = Math.max(1, 3.2 * s);
+    for (const [x, y, w, h] of rects) {
+      ctx.strokeRect(x * s, y * s, w * s, h * s);
+    }
+
+    // Recessed hatches
+    const hatches: Array<[number, number, number, number]> = [
+      [88, 72, 132, 86],
+      [612, 88, 164, 112],
+      [556, 396, 148, 108],
+      [120, 654, 180, 92],
+      [690, 862, 190, 96],
+    ];
+    ctx.strokeStyle = '#242424';
+    ctx.lineWidth = Math.max(1, 2.5 * s);
+    for (const [x, y, w, h] of hatches) {
+      ctx.strokeRect(x * s, y * s, w * s, h * s);
+    }
+
+    // Deep louver vent grooves
+    const ventBlocks: Array<[number, number, number, number, number]> = [
+      [352, 310, 108, 12, 8],
+      [818, 376, 146, 11, 9],
+      [548, 646, 168, 10, 7],
+    ];
+    ctx.fillStyle = '#1c1c1c';
+    for (const [vx, vy, vw, stepY, count] of ventBlocks) {
+      for (let i = 0; i < count; i++) {
+        ctx.fillRect(vx * s, (vy + i * stepY) * s, vw * s, Math.max(1.5, 4.5 * s));
+      }
+    }
+
+    return this.createTextureFromCanvas(canvas, false, 1, 1);
+  }
+
+  private createBrushedMetalRoughnessTexture(size: number): THREE.CanvasTexture {
+    const { canvas, ctx } = this.createCanvas(size, size);
+    if (!ctx) return this.createTextureFromCanvas(canvas, false, 2, 2);
+
+    ctx.fillStyle = '#383838';
+    ctx.fillRect(0, 0, size, size);
+    for (let y = 0; y < size; y++) {
+      const grain = 46 + ((Math.sin(y * 1.9) * 10 + Math.cos(y * 5.3) * 8 + Math.sin(y * 13.7) * 5) | 0);
+      ctx.fillStyle = `rgb(${grain},${grain},${grain})`;
+      ctx.fillRect(0, y, size, 1);
+    }
     return this.createTextureFromCanvas(canvas, false, 2, 2);
   }
 

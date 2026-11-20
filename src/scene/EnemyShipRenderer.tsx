@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { GraphicsPreset } from '../config/graphics';
 import { SHIP_CONFIGS } from '../config/ships';
+import { AssetManager } from '../engine/AssetManager';
 import { MAX_ENEMIES, type CombatManager } from '../engine/combat/CombatManager';
 import type { ShipConfig, ShipVisualHandle } from '../types/game';
 import { buildShipModel } from './shipGeometry';
@@ -49,6 +50,14 @@ export function EnemyShipRenderer({
   graphics,
   playerPosition,
 }: EnemyShipRendererProps) {
+  const glowSpriteTex = useMemo(() => AssetManager.acquireGlowSprite(), []);
+
+  useEffect(() => {
+    return () => {
+      AssetManager.releaseGlowSprite();
+    };
+  }, [glowSpriteTex]);
+
   const slots = useMemo<PooledEnemySlot[]>(() => {
     const hostileConfigs: ShipConfig[] = [
       createHostileShipConfig(SHIP_CONFIGS.striker),
@@ -72,14 +81,16 @@ export function EnemyShipRenderer({
       root.add(bankGroup);
 
       const hitGlowMat = new THREE.SpriteMaterial({
-        color: '#fb923c',
+        map: glowSpriteTex,
+        color: '#67e8f9',
         transparent: true,
         opacity: 0,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
+        toneMapped: false,
       });
       const hitGlowSprite = new THREE.Sprite(hitGlowMat);
-      hitGlowSprite.scale.set(6.5, 6.5, 1);
+      hitGlowSprite.scale.set(3.6, 3.6, 1);
       root.add(hitGlowSprite);
       const shieldField = createShieldField('#fb923c', handle.group);
       bankGroup.add(shieldField);
@@ -87,7 +98,7 @@ export function EnemyShipRenderer({
       list.push({ root, bankGroup, handle, hitGlowSprite, hitGlowMat, shieldField });
     }
     return list;
-  }, [graphics.textureResolution]);
+  }, [graphics.textureResolution, glowSpriteTex]);
 
   useEffect(() => {
     return () => {
@@ -128,11 +139,12 @@ export function EnemyShipRenderer({
       const boostVisual = enemy.aiState === 'evade' || enemy.aiState === 'reposition' ? 0.85 : 0.25;
       slot.handle.updateVisuals(dt, speedRatio, boostVisual, 0, 0, 0);
 
-      // Brief impact flare when struck by player fire
+      // Subtle compact radial hit glint (cyan on shielded hull, warm amber on bare armor)
       if (enemy.hitFlashTimer > 0 && graphics.postGlowEnabled) {
         slot.hitGlowSprite.visible = true;
-        slot.hitGlowMat.opacity = Math.min(0.85, enemy.hitFlashTimer * 6.0);
-        const s = 5.8 + enemy.hitFlashTimer * 18;
+        slot.hitGlowMat.color.set(enemy.shield.current > 0 ? '#67e8f9' : '#fdba74');
+        slot.hitGlowMat.opacity = Math.min(0.36, enemy.hitFlashTimer * 2.6);
+        const s = 3.1 + enemy.hitFlashTimer * 6.5;
         slot.hitGlowSprite.scale.set(s, s, 1);
       } else {
         slot.hitGlowSprite.visible = false;

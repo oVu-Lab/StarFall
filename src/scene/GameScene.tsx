@@ -20,7 +20,9 @@ import type {
 import type { MissionEnvironmentTheme } from '../types/mission';
 import { CombatVFX, type CombatVFXHandle } from './CombatVFX';
 import { EnemyShipRenderer } from './EnemyShipRenderer';
+import { PulseCannonVFX } from './PulseCannonVFX';
 import { buildShipModel } from './shipGeometry';
+import { buildVanguardModel } from './vanguardModel';
 import { SpaceEnvironment } from './SpaceEnvironment';
 import { SpeedLinesVFX } from './SpeedLinesVFX';
 import { TransportRenderer } from './TransportRenderer';
@@ -66,24 +68,18 @@ export function GameScene({
   const { camera, gl } = useThree();
   const shipRootRef = useRef<THREE.Group>(null);
   const shipBankRef = useRef<THREE.Group>(null);
-  const muzzleLeftRef = useRef<THREE.Sprite>(null);
-  const muzzleRightRef = useRef<THREE.Sprite>(null);
   const vfxRef = useRef<CombatVFXHandle>(null);
   const cameraController = useMemo(() => new CameraController(), []);
-  const glowSpriteTex = useMemo(() => AssetManager.acquireGlowSprite(), []);
-
-  useEffect(() => {
-    return () => {
-      AssetManager.releaseGlowSprite();
-    };
-  }, [glowSpriteTex]);
 
   // Display the inspected ship while in Hangar, otherwise the active flight ship
   const displayedShipId = phase === 'menu' && menuSection === 'hangar' ? hangarShipId : activeShipId;
   const displayedShipConfig = SHIP_CONFIGS[displayedShipId];
 
   const shipHandle = useMemo(
-    () => buildShipModel(displayedShipConfig, graphics.textureResolution),
+    () =>
+      displayedShipConfig.id === 'interceptor'
+        ? buildVanguardModel(displayedShipConfig, graphics.textureResolution)
+        : buildShipModel(displayedShipConfig, graphics.textureResolution),
     [displayedShipConfig, graphics.textureResolution],
   );
   const shieldField = useMemo(
@@ -96,44 +92,11 @@ export function GameScene({
     shipHandle.setDetailLevel?.(graphics.postGlowEnabled);
   }, [shipHandle, graphics.postGlowEnabled]);
 
-  const muzzleMatLeft = useMemo(
-    () =>
-      new THREE.SpriteMaterial({
-        map: glowSpriteTex,
-        color: '#67e8f9',
-        transparent: true,
-        opacity: 0,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      }),
-    [glowSpriteTex],
-  );
-
-  const muzzleMatRight = useMemo(
-    () =>
-      new THREE.SpriteMaterial({
-        map: glowSpriteTex,
-        color: '#67e8f9',
-        transparent: true,
-        opacity: 0,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      }),
-    [glowSpriteTex],
-  );
-
   useEffect(() => {
     return () => {
       shipHandle.dispose();
     };
   }, [shipHandle]);
-
-  useEffect(() => {
-    return () => {
-      muzzleMatLeft.dispose();
-      muzzleMatRight.dispose();
-    };
-  }, [muzzleMatLeft, muzzleMatRight]);
 
   // Wire CombatManager callbacks to procedural audio, pooled 3D VFX, and MissionManager
   useEffect(() => {
@@ -268,19 +231,6 @@ export function GameScene({
         shipBankRef.current.rotation.set(0, 0, flight.visualBankAngle);
       }
 
-      if (muzzleLeftRef.current) {
-        const ml = telemetry.muzzleFlashLeft / 0.065;
-        muzzleLeftRef.current.visible = playerAlive && ml > 0.02;
-        muzzleMatLeft.opacity = Math.min(1, ml * 1.15);
-        muzzleLeftRef.current.scale.setScalar(1.3 + ml * 2.1);
-      }
-      if (muzzleRightRef.current) {
-        const mr = telemetry.muzzleFlashRight / 0.065;
-        muzzleRightRef.current.visible = playerAlive && mr > 0.02;
-        muzzleMatRight.opacity = Math.min(1, mr * 1.15);
-        muzzleRightRef.current.scale.setScalar(1.3 + mr * 2.1);
-      }
-
       const speedRatio = telemetry.speed / Math.max(telemetry.maxSpeed, 1);
       shipHandle.updateVisuals(
         dt,
@@ -327,8 +277,6 @@ export function GameScene({
     if (shipBankRef.current) {
       shipBankRef.current.rotation.set(0, 0, 0);
     }
-    if (muzzleLeftRef.current) muzzleLeftRef.current.visible = false;
-    if (muzzleRightRef.current) muzzleRightRef.current.visible = false;
 
     shipHandle.updateVisuals(dt, 0.32, menuSection === 'hangar' ? 0.18 : 0.12, 0, 0, 0);
 
@@ -354,18 +302,13 @@ export function GameScene({
       <group ref={shipRootRef} position={[0, 12, 40]}>
         <group ref={shipBankRef}>
           <primitive object={shipHandle.group} />
-        <primitive object={shieldField} />
-          <sprite
-            ref={muzzleLeftRef}
-            material={muzzleMatLeft}
-            position={[-1.48, -0.14, -1.75]}
-            visible={false}
-          />
-          <sprite
-            ref={muzzleRightRef}
-            material={muzzleMatRight}
-            position={[1.48, -0.14, -1.75]}
-            visible={false}
+          <primitive object={shieldField} />
+          <PulseCannonVFX
+            telemetryRef={telemetryRef}
+            shipId={displayedShipId}
+            active={phase === 'playing' && !combat.playerHealth.isDestroyed}
+            showcase={phase !== 'playing'}
+            graphics={graphics}
           />
         </group>
       </group>

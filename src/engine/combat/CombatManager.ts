@@ -44,6 +44,7 @@ export interface VfxBurstEvent {
   color: string;
   scale: number;
   normal?: THREE.Vector3;
+  weaponId?: string;
 }
 
 export interface CombatCallbacks {
@@ -817,12 +818,32 @@ export class CombatManager {
             this.stats.damageDealt += dmgRes.hullDamage;
             this.hitMarkerTimer = 0.16;
 
+            _shieldNormal.subVectors(_hitPoint, enemy.position);
+            if (_shieldNormal.lengthSq() > 0.0001) {
+              _shieldNormal.normalize();
+            } else {
+              _shieldNormal.copy(p.direction).negate().normalize();
+            }
+
             if (dmgRes.shieldDamage > 0) {
-              const impact = projectShieldImpact(enemy.position, enemy.quaternion, _hitPoint);
-              this.callbacks.onVfxBurst?.({ kind: dmgRes.shieldBrokenNow ? 'shield-break' : 'shield-hit', position: impact.position, normal: impact.normal, color: '#22d3ee', scale: dmgRes.shieldBrokenNow ? 1.2 : 0.7 });
+              this.callbacks.onVfxBurst?.({
+                kind: dmgRes.shieldBrokenNow ? 'shield-break' : 'shield-hit',
+                position: _hitPoint,
+                normal: _shieldNormal,
+                color: '#22d3ee',
+                scale: dmgRes.shieldBrokenNow ? 1.2 : 0.75,
+                weaponId: p.weaponId,
+              });
               if (dmgRes.shieldBrokenNow) this.callbacks.onShieldBreak?.(enemy.id, false);
             } else {
-              this.callbacks.onVfxBurst?.({ kind: 'impact', position: _hitPoint, color: '#22d3ee', scale: 0.7 });
+              this.callbacks.onVfxBurst?.({
+                kind: 'impact',
+                position: _hitPoint,
+                normal: _shieldNormal,
+                color: '#22d3ee',
+                scale: 0.75,
+                weaponId: p.weaponId,
+              });
             }
 
             this.callbacks.onDamage?.({
