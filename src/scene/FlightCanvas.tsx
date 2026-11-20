@@ -21,6 +21,8 @@ interface FlightCanvasProps {
   menuSection: MenuSection;
   activeShipId: ShipId;
   hangarShipId: ShipId;
+  activeSkinId: string;
+  hangarSkinId: string;
   flight: FlightController;
   combat: CombatManager;
   missionManager: MissionManager;
@@ -40,6 +42,8 @@ export function FlightCanvas({
   menuSection,
   activeShipId,
   hangarShipId,
+  activeSkinId,
+  hangarSkinId,
   flight,
   combat,
   missionManager,
@@ -116,6 +120,8 @@ export function FlightCanvas({
           menuSection={menuSection}
           activeShipId={activeShipId}
           hangarShipId={hangarShipId}
+          activeSkinId={activeSkinId}
+          hangarSkinId={hangarSkinId}
           flight={flight}
           combat={combat}
           missionManager={missionManager}

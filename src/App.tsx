@@ -8,16 +8,20 @@ import { PauseOverlay } from './components/PauseOverlay';
 import { resolveEffectiveGraphics } from './config/graphics';
 import { CAMPAIGN_MISSIONS, getMissionById, getNextMission } from './config/missions';
 import { loadSavedSettings, saveSettings, SHIP_CONFIGS } from './config/ships';
+import { getSkinCatalogItem, normalizeCollection, purchaseCollectionItem } from './config/collection';
 import { AssetManager } from './engine/AssetManager';
 import { CombatManager } from './engine/combat/CombatManager';
 import { createInitialTelemetry, FlightController } from './engine/FlightController';
 import { InputManager } from './engine/InputManager';
 import {
   isMissionUnlocked,
+  getCampaignSaveError,
   loadCampaignProgress,
   recordMissionOutcome,
+  saveCampaignProgress,
 } from './engine/mission/CampaignProgressStore';
 import { MissionManager } from './engine/mission/MissionManager';
+import { applyMissionRewards } from './engine/mission/CampaignRewards';
 import { FlightCanvas } from './scene/FlightCanvas';
 import type {
   GamePhase,
@@ -48,10 +52,15 @@ function getInitialSelectedMission(save: CampaignSaveData): string {
 export default function App() {
   const [phase, setPhase] = useState<GamePhase>('menu');
   const [menuSection, setMenuSection] = useState<MenuSection>('main');
-  const [activeShipId] = useState<ShipId>('interceptor');
-  const [hangarShipId, setHangarShipId] = useState<ShipId>('interceptor');
   const [settings, setSettings] = useState<GameSettings>(() => loadSavedSettings());
   const [campaignSave, setCampaignSave] = useState<CampaignSaveData>(() => loadCampaignProgress());
+  const collection = normalizeCollection(campaignSave.collection);
+  const activeShipId = collection.selectedShipId as ShipId;
+  const activeSkinId = collection.selectedSkinByShip[activeShipId] ?? `${activeShipId}:default`;
+  const [hangarShipId, setHangarShipId] = useState<ShipId>(activeShipId);
+  const [hangarSkinId, setHangarSkinId] = useState<string>(collection.selectedSkinByShip[activeShipId]);
+  const [collectionNotice, setCollectionNotice] = useState('');
+  const [campaignSaveError, setCampaignSaveError] = useState(() => getCampaignSaveError());
   const [selectedMissionId, setSelectedMissionId] = useState<string>(() =>
     getInitialSelectedMission(loadCampaignProgress()),
   );
@@ -158,7 +167,10 @@ export default function App() {
           rawResult.scoreBreakdown.totalScore,
           rawResult.timeTakenSec,
         );
-        setCampaignSave(outcome.nextSave);
+        const rewarded = applyMissionRewards(rawResult, outcome.nextSave);
+        const saved = saveCampaignProgress(rewarded.nextSave);
+        setCampaignSaveError(saved ? null : getCampaignSaveError());
+        setCampaignSave(rewarded.nextSave);
 
         const unlockedNew =
           rawResult.status === 'completed' && !outcome.wasPreviouslyCompleted
@@ -170,6 +182,7 @@ export default function App() {
           unlockedNextMissionName: unlockedNew,
           isNewBestRank: outcome.isNewBestRank,
           isNewBestScore: outcome.isNewBestScore,
+          rewardSummary: rewarded.summary,
         });
         setPhase('results');
       },
@@ -219,6 +232,39 @@ export default function App() {
   const handleUpdateSettings = useCallback((patch: Partial<GameSettings>) => {
     setSettings((prev) => ({ ...prev, ...patch }));
   }, []);
+
+  const updateCollection = useCallback((next: CampaignSaveData) => {
+    const normalized = { ...next, collection: normalizeCollection(next.collection) };
+    campaignSaveRef.current = normalized;
+    const saved = saveCampaignProgress(normalized);
+    if (saved) { setCampaignSave(normalized); setCampaignSaveError(null); }
+    else setCampaignSaveError(getCampaignSaveError());
+    return saved;
+  }, []);
+  const handlePurchase = useCallback((kind: 'ship' | 'skin', id: string) => {
+    let result = purchaseCollectionItem(campaignSaveRef.current, kind, id);
+    if (!result.ok) { setCollectionNotice(result.message); return; }
+    if (kind === 'skin') {
+      const skin = getSkinCatalogItem(id)!;
+      result = { ...result, save: { ...result.save, collection: { ...normalizeCollection(result.save.collection), selectedSkinByShip: { ...normalizeCollection(result.save.collection).selectedSkinByShip, [skin.shipId]: id } } } };
+      setHangarSkinId(id);
+    }
+    setCollectionNotice(updateCollection(result.save) ? result.message : 'Purchase could not be saved. Please retry.');
+  }, [updateCollection]);
+  const handleSelectShip = useCallback((id: ShipId) => {
+    setHangarShipId(id);
+    setHangarSkinId(normalizeCollection(campaignSaveRef.current.collection).selectedSkinByShip[id] ?? `${id}:default`);
+    if (normalizeCollection(campaignSaveRef.current.collection).ownedShipIds.includes(id)) {
+      const next = { ...campaignSaveRef.current, collection: { ...normalizeCollection(campaignSaveRef.current.collection), selectedShipId: id } };
+      updateCollection(next);
+    }
+  }, [updateCollection]);
+  const handleSelectSkin = useCallback((shipId: ShipId, skinId: string) => {
+    const normalized = normalizeCollection(campaignSaveRef.current.collection);
+    const skin = getSkinCatalogItem(skinId);
+    if (!skin || skin.shipId !== shipId || !normalized.ownedSkinIds.includes(skinId)) return;
+    updateCollection({ ...campaignSaveRef.current, collection: { ...normalized, selectedSkinByShip: { ...normalized.selectedSkinByShip, [shipId]: skinId } } });
+  }, [updateCollection]);
 
   const handleCanvasReady = useCallback((canvas: HTMLCanvasElement) => {
     inputRef.current.setLockTarget(canvas);
@@ -414,6 +460,8 @@ export default function App() {
         menuSection={menuSection}
         activeShipId={activeShipId}
         hangarShipId={hangarShipId}
+        activeSkinId={activeSkinId}
+        hangarSkinId={hangarSkinId}
         flight={flightRef.current}
         combat={combatRef.current}
         missionManager={missionManagerRef.current}
@@ -429,6 +477,11 @@ export default function App() {
       />
 
       {/* Semantic UI Overlays */}
+      {campaignSaveError && (
+        <div role="status" className="absolute left-1/2 top-4 z-50 w-[min(92vw,42rem)] -translate-x-1/2 rounded border border-amber-400/50 bg-slate-950/95 px-4 py-3 text-sm text-amber-100 shadow-xl">
+          {campaignSaveError.message}
+        </div>
+      )}
       {phase === 'menu' && (
         <MainMenu
           section={menuSection}
@@ -438,7 +491,11 @@ export default function App() {
           onSelectMission={setSelectedMissionId}
           onLaunchMission={handleStartMission}
           hangarShipId={hangarShipId}
-          onSelectHangarShip={setHangarShipId}
+          collectionNotice={collectionNotice}
+          onSelectHangarShip={handleSelectShip}
+          onSelectSkin={handleSelectSkin}
+          onPreviewSkin={setHangarSkinId}
+          onPurchase={handlePurchase}
           settings={settings}
           onUpdateSettings={handleUpdateSettings}
           hangarOrbitRef={hangarOrbitRef}

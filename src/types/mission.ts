@@ -202,8 +202,9 @@ export interface MissionDefinition {
 }
 
 export interface MissionScoreBreakdown {
+  requiredObjectiveScore: number;
+  optionalObjectiveScore: number;
   combatScore: number;
-  accuracyScore: number;
   survivalScore: number;
   timeScore: number;
   totalScore: number;
@@ -231,6 +232,18 @@ export interface MissionResult {
   unlockedNextMissionName: string | null;
   isNewBestRank: boolean;
   isNewBestScore: boolean;
+  completedObjectiveIds: string[];
+  optionalObjectiveIds: string[];
+  rewardSummary?: RewardSummary;
+}
+
+export interface RewardSummary {
+  creditsEarned: number;
+  creditsBalance: number;
+  firstClear: number;
+  rankImprovement: number;
+  optionalRewards: Array<{ id: string; credits: number }>;
+  achievementRewards: Array<{ id: string; name: string; credits: number }>;
 }
 
 export interface MissionProgressRecord {
@@ -244,6 +257,24 @@ export interface MissionProgressRecord {
 export interface CampaignSaveData {
   version: number;
   missions: Record<string, MissionProgressRecord>;
+  rewards?: CampaignRewardState;
+  collection?: CampaignCollectionState;
+}
+
+export interface CampaignCollectionState {
+  ownedShipIds: string[];
+  ownedSkinIds: string[];
+  selectedShipId: string;
+  selectedSkinByShip: Record<string, string>;
+}
+
+export interface CampaignRewardState {
+  credits: number;
+  paidFirstClearMissionIds: string[];
+  paidRankRewards: Record<string, MissionRank>;
+  completedOptionalRewardIds: string[];
+  unlockedAchievementIds: string[];
+  ledgerIds: string[];
 }
 
 export interface MissionHudSnapshot {

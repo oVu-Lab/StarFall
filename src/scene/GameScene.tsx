@@ -3,7 +3,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { AudioManager } from '../audio/AudioManager';
 import type { GraphicsPreset } from '../config/graphics';
-import { SHIP_CONFIGS } from '../config/ships';
+import { getShipConfigWithSkin } from '../config/collection';
 import { AssetManager } from '../engine/AssetManager';
 import { CameraController } from '../engine/CameraController';
 import { PLAYER_ENTITY_ID, type CombatManager, type VfxBurstEvent } from '../engine/combat/CombatManager';
@@ -42,6 +42,8 @@ interface GameSceneProps {
   menuSection: MenuSection;
   activeShipId: ShipId;
   hangarShipId: ShipId;
+  activeSkinId: string;
+  hangarSkinId: string;
   flight: FlightController;
   combat: CombatManager;
   missionManager: MissionManager;
@@ -72,6 +74,8 @@ export function GameScene({
   menuSection,
   activeShipId,
   hangarShipId,
+  activeSkinId,
+  hangarSkinId,
   flight,
   combat,
   missionManager,
@@ -92,7 +96,8 @@ export function GameScene({
 
   // Display the inspected ship while in Hangar, otherwise the active flight ship
   const displayedShipId = phase === 'menu' && menuSection === 'hangar' ? hangarShipId : activeShipId;
-  const displayedShipConfig = SHIP_CONFIGS[displayedShipId];
+  const displayedSkinId = phase === 'menu' && menuSection === 'hangar' ? hangarSkinId : activeSkinId;
+  const displayedShipConfig = useMemo(() => getShipConfigWithSkin(displayedShipId, displayedSkinId), [displayedShipId, displayedSkinId]);
 
   const shipHandle = useMemo(
     () =>

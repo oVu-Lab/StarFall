@@ -231,6 +231,10 @@ export class MissionManager {
       timeTakenSec: runtime?.elapsedSec ?? this.elapsedSec,
       parTimeSec: this.mission.parTimeSec,
       completed: outcome === 'completed',
+      completedRequiredObjectives: runtime ? this.mission.objectives.filter((objective) => !objective.optional && runtime.objectives[objective.id]?.status === 'completed').length : 0,
+      totalRequiredObjectives: Math.max(1, this.mission.objectives.filter((objective) => !objective.optional).length),
+      completedOptionalObjectives: runtime ? this.mission.objectives.filter((objective) => objective.optional && runtime.objectives[objective.id]?.status === 'completed').length : 0,
+      totalOptionalObjectives: this.mission.objectives.filter((objective) => objective.optional).length,
       transportRemainingRatio: combat.transport
         ? combat.transport.health.current / combat.transport.health.max
         : undefined,
@@ -262,6 +266,8 @@ export class MissionManager {
       unlockedNextMissionName: nextMission ? `${nextMission.code} — ${nextMission.name}` : null,
       isNewBestRank: false,
       isNewBestScore: false,
+      completedObjectiveIds: runtime ? this.mission.objectives.filter((objective) => runtime.objectives[objective.id]?.status === 'completed').map((objective) => objective.id) : [],
+      optionalObjectiveIds: this.mission.objectives.filter((objective) => objective.optional).map((objective) => objective.id),
     };
     this.emitHud();
     this.callbacks.onMissionEnd?.(result);

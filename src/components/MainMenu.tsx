@@ -16,6 +16,10 @@ interface MainMenuProps {
   onLaunchMission: (mission: MissionDefinition) => void;
   hangarShipId: ShipId;
   onSelectHangarShip: (id: ShipId) => void;
+  onSelectSkin: (shipId: ShipId, skinId: string) => void;
+  onPreviewSkin: (skinId: string) => void;
+  onPurchase: (kind: 'ship' | 'skin', id: string) => void;
+  collectionNotice: string;
   settings: GameSettings;
   onUpdateSettings: (patch: Partial<GameSettings>) => void;
   hangarOrbitRef: React.MutableRefObject<{ yaw: number; pitch: number }>;
@@ -30,6 +34,10 @@ export function MainMenu({
   onLaunchMission,
   hangarShipId,
   onSelectHangarShip,
+  onSelectSkin,
+  onPreviewSkin,
+  onPurchase,
+  collectionNotice,
   settings,
   onUpdateSettings,
   hangarOrbitRef,
@@ -51,6 +59,11 @@ export function MainMenu({
       <HangarView
         selectedShipId={hangarShipId}
         onSelectShip={onSelectHangarShip}
+        save={campaignSave}
+        notice={collectionNotice}
+        onSelectSkin={onSelectSkin}
+        onPreviewSkin={onPreviewSkin}
+        onPurchase={onPurchase}
         onLaunchFlight={() => onChangeSection('missions')}
         onBack={() => onChangeSection('main')}
         hangarOrbitRef={hangarOrbitRef}

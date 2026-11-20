@@ -132,6 +132,22 @@ export function MissionResultsOverlay({
           </div>
         </div>
 
+        {result.rewardSummary && (
+          <div className="mt-4 border border-cyan-900/70 bg-[#071022] p-4">
+            <div className="flex items-baseline justify-between">
+              <span className="font-mono text-xs tracking-wider text-slate-400">CREDITS EARNED</span>
+              <span className="font-mono text-lg font-bold text-cyan-200">+{result.rewardSummary.creditsEarned} CR</span>
+            </div>
+            <div className="mt-1 text-xs text-slate-400">Balance: {result.rewardSummary.creditsBalance} CR</div>
+            {result.rewardSummary.creditsEarned > 0 && <div className="mt-3 space-y-1 text-xs text-slate-300">
+              {result.rewardSummary.firstClear > 0 && <div>First clear <span className="float-right">+{result.rewardSummary.firstClear} CR</span></div>}
+              {result.rewardSummary.rankImprovement > 0 && <div>Rank reward <span className="float-right">+{result.rewardSummary.rankImprovement} CR</span></div>}
+              {result.rewardSummary.optionalRewards.map((reward) => <div key={reward.id}>Optional objective <span className="float-right">+{reward.credits} CR</span></div>)}
+              {result.rewardSummary.achievementRewards.map((reward) => <div key={reward.id}>{reward.name} <span className="float-right">+{reward.credits} CR</span></div>)}
+            </div>}
+          </div>
+        )}
+
         {/* Deterministic Score Breakdown */}
         <div className="mt-5 border border-slate-800 bg-[#071022] p-4">
           <div className="flex items-baseline justify-between">
@@ -142,28 +158,18 @@ export function MissionResultsOverlay({
               {breakdown.totalScore} / 1000 PTS
             </span>
           </div>
-          <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2.5 text-xs sm:grid-cols-4">
+          <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2.5 text-xs sm:grid-cols-5">
+            <div><div className="flex justify-between text-slate-400"><span>Required</span><span className="font-mono text-slate-200">{breakdown.requiredObjectiveScore}/400</span></div><div className="mt-1 h-1.5 bg-slate-800"><div className="h-full bg-cyan-400" style={{ width: `${breakdown.requiredObjectiveScore / 4}%` }} /></div></div>
+            <div><div className="flex justify-between text-slate-400"><span>Optional</span><span className="font-mono text-slate-200">{breakdown.optionalObjectiveScore}/200</span></div><div className="mt-1 h-1.5 bg-slate-800"><div className="h-full bg-sky-400" style={{ width: `${breakdown.optionalObjectiveScore / 2}%` }} /></div></div>
             <div>
               <div className="flex justify-between text-slate-400">
                 <span>Combat</span>
-                <span className="font-mono text-slate-200">{breakdown.combatScore}/400</span>
+                <span className="font-mono text-slate-200">{breakdown.combatScore}/100</span>
               </div>
               <div className="mt-1 h-1.5 bg-slate-800">
                 <div
                   className="h-full bg-cyan-400"
-                  style={{ width: `${(breakdown.combatScore / 400) * 100}%` }}
-                />
-              </div>
-            </div>
-            <div>
-              <div className="flex justify-between text-slate-400">
-                <span>Accuracy</span>
-                <span className="font-mono text-slate-200">{breakdown.accuracyScore}/250</span>
-              </div>
-              <div className="mt-1 h-1.5 bg-slate-800">
-                <div
-                  className="h-full bg-sky-400"
-                  style={{ width: `${(breakdown.accuracyScore / 250) * 100}%` }}
+                  style={{ width: `${breakdown.combatScore}%` }}
                 />
               </div>
             </div>
@@ -181,13 +187,13 @@ export function MissionResultsOverlay({
             </div>
             <div>
               <div className="flex justify-between text-slate-400">
-                <span>Speed</span>
-                <span className="font-mono text-slate-200">{breakdown.timeScore}/150</span>
+                <span>Performance</span>
+                <span className="font-mono text-slate-200">{breakdown.timeScore}/100</span>
               </div>
               <div className="mt-1 h-1.5 bg-slate-800">
                 <div
                   className="h-full bg-amber-400"
-                  style={{ width: `${(breakdown.timeScore / 150) * 100}%` }}
+                  style={{ width: `${breakdown.timeScore}%` }}
                 />
               </div>
             </div>
