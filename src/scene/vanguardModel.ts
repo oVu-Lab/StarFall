@@ -1019,27 +1019,29 @@ export function buildVanguardModel(
 
   // Rotating Twin Turbine Compressor Fans (1 single merged mesh per intake)
   const intakeFans: THREE.Group[] = [];
+  const fanBladeCount = 10;
   const fanHubGeo = new THREE.ConeGeometry(0.085, 0.24, 14);
   fanHubGeo.rotateX(-Math.PI / 2);
   fanHubGeo.translate(0, 0, -0.06);
-  const fanBladeGeo = new THREE.BoxGeometry(0.23, 0.014, 0.065);
+  const fanBladeGeo = new THREE.BoxGeometry(0.22, 0.016, 0.078);
 
   for (const [ix, iy, iz] of VANGUARD_HARDPOINTS.intakes) {
     const fanGroup = new THREE.Group();
     fanGroup.name = `vanguard-intake-fan-${ix < 0 ? 'L' : 'R'}`;
     fanGroup.position.set(ix, iy, iz + 0.26);
 
-    const bladeCount = 14;
     const bladeParts: THREE.BufferGeometry[] = [normalizeForMerge(fanHubGeo)];
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const e = new THREE.Euler();
     const p = new THREE.Vector3();
     const s = new THREE.Vector3(1, 1, 1);
-    for (let b = 0; b < bladeCount; b++) {
-      const ang = (b / bladeCount) * Math.PI * 2;
+    // Mirror blade pitch between counter-rotating L/R turbines so both scoop air aft
+    const pitchSign = ix < 0 ? 1 : -1;
+    for (let b = 0; b < fanBladeCount; b++) {
+      const ang = (b / fanBladeCount) * Math.PI * 2;
       p.set(Math.cos(ang) * 0.145, Math.sin(ang) * 0.145, 0);
-      e.set(0.38, 0, ang);
+      e.set(0.38 * pitchSign, 0, ang);
       q.setFromEuler(e);
       m.compose(p, q, s);
       bladeParts.push(normalizeForMerge(fanBladeGeo, m));
@@ -1665,10 +1667,13 @@ export function buildVanguardModel(
         }
       }
 
-      // Spin twin turbine intake compressor fans smoothly proportional to thrust
-      const fanSpeed = 5.5 + clampedSpeed * 14.0 + boostIntensity * 18.0;
-      intakeFans[0].rotation.z += dt * fanSpeed;
-      intakeFans[1].rotation.z -= dt * fanSpeed;
+      // Spin twin turbine intake compressor fans smoothly proportional to thrust,
+      // clamped below the per-frame blade-pitch Nyquist limit to prevent wagon-wheel aliasing
+      const fanSpeed = 3.0 + clampedSpeed * 4.2 + boostIntensity * 3.8;
+      const maxSafeStep = ((Math.PI * 2) / fanBladeCount) * 0.36;
+      const fanStep = Math.min(Math.max(dt, 0) * fanSpeed, maxSafeStep);
+      intakeFans[0].rotation.z += fanStep;
+      intakeFans[1].rotation.z -= fanStep;
 
       // Exponentially damped flight surface & thrust-vectoring paddle deflection
       smoothPitch = THREE.MathUtils.damp(

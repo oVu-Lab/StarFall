@@ -21,6 +21,42 @@ const _perp = new THREE.Vector3();
 const _localDir = new THREE.Vector3();
 const _invQuat = new THREE.Quaternion();
 const _zeroVec = new THREE.Vector3(0, 0, 0);
+const _relativeFromTarget = new THREE.Vector3();
+const _targetForward = new THREE.Vector3();
+const _targetRight = new THREE.Vector3();
+
+export const MAX_SIMULTANEOUS_ATTACK_RUNS = 2;
+export const ATTACK_RUN_DURATION_SEC: Record<EnemyEntity['personality'], number> = {
+  aggressor: 5.0,
+  flanker: 4.5,
+  defender: 5.8,
+  ace: 4.2,
+};
+const ATTACK_PASS_REAR_DISTANCE = 70;
+
+export type AttackRunEndReason = 'danger-close' | 'passed-target' | 'lost-range' | 'timeout';
+
+export function getAttackRunEndReason(
+  distance: number,
+  minSafeDistance: number,
+  forwardBearing: number,
+  engageRange: number,
+  remainingTime: number,
+): AttackRunEndReason | null {
+  if (distance <= minSafeDistance) return 'danger-close';
+  if (forwardBearing < -ATTACK_PASS_REAR_DISTANCE) return 'passed-target';
+  if (distance > engageRange * 1.45) return 'lost-range';
+  if (remainingTime <= 0) return 'timeout';
+  return null;
+}
+
+function countActiveAttackRuns(enemies: EnemyEntity[]): number {
+  let count = 0;
+  for (const other of enemies) {
+    if (other.active && !other.health.isDestroyed && other.aiState === 'engage') count += 1;
+  }
+  return count;
+}
 
 export interface EnemyAIUpdateResult {
   fired: boolean;
@@ -91,6 +127,7 @@ export class EnemyAIController {
     targetAlive: boolean,
     projectiles: ProjectilePool,
     allEnemies: EnemyEntity[],
+    targetForward?: THREE.Vector3,
   ): EnemyAIUpdateResult {
     const safeDt = Math.min(Math.max(dt, 0.0001), 0.05);
     const out: EnemyAIUpdateResult = { fired: false, fireOrigin: _resultOrigin };
@@ -120,12 +157,26 @@ export class EnemyAIController {
     _toPlayer.subVectors(targetPos, enemy.position);
     const distToPlayer = _toPlayer.length();
     const dirToPlayer = distToPlayer > 0.001 ? _toPlayer.divideScalar(distToPlayer) : _forward.set(0, 0, -1);
+    if (targetForward && targetForward.lengthSq() > 0.01) {
+      _targetForward.copy(targetForward).normalize();
+    } else if (targetVel.lengthSq() > 16) {
+      _targetForward.copy(targetVel).normalize();
+    } else {
+      // With a stationary protected actor, treat the target's current bearing as its approach axis.
+      _targetForward.copy(dirToPlayer).negate();
+    }
+    _relativeFromTarget.subVectors(enemy.position, targetPos);
+    const isInFrontAttackArea = _relativeFromTarget.dot(_targetForward) >= -12;
+    _targetRight.crossVectors(_targetForward, _up);
+    if (_targetRight.lengthSq() < 0.01) _targetRight.set(1, 0, 0);
+    else _targetRight.normalize();
 
     enemy.aiStateTimer = Math.max(0, enemy.aiStateTimer - safeDt);
     enemy.coordinationTimer = Math.max(0, enemy.coordinationTimer - safeDt);
+    const attackRunSlotAvailable = countActiveAttackRuns(allEnemies) < MAX_SIMULTANEOUS_ATTACK_RUNS;
 
     // Coordinated squad flank-vector shift governed by DifficultyProfile
-    if (enemy.coordinationTimer <= 0 && (enemy.aiState === 'pursue' || enemy.aiState === 'engage')) {
+    if (enemy.coordinationTimer <= 0 && enemy.aiState === 'pursue' && isInFrontAttackArea) {
       enemy.coordinationTimer = tuning.coordinationIntervalSec;
       if (personality.flankAngleRad >= 0.45) {
         enemy.flankSign = enemy.flankSign === 1 ? -1 : 1;
@@ -146,43 +197,52 @@ export class EnemyAIController {
         }
         case 'acquire': {
           if (enemy.aiStateTimer <= 0) {
-            enemy.aiState = distToPlayer <= personality.engageRange ? 'engage' : 'pursue';
-            enemy.aiStateTimer = 2.4;
+            const canEngage = distToPlayer <= personality.engageRange && isInFrontAttackArea && attackRunSlotAvailable;
+            enemy.aiState = canEngage ? 'engage' : 'pursue';
+            enemy.aiStateTimer = canEngage ? ATTACK_RUN_DURATION_SEC[personality.id] : 2.4;
           }
           break;
         }
         case 'pursue': {
           if (distToPlayer <= personality.minSafeDistance) {
-            this.beginReposition(enemy, targetPos, personality.preferredRange);
-          } else if (distToPlayer <= personality.engageRange) {
+            this.beginReposition(enemy, targetPos, personality.preferredRange, _targetForward);
+          } else if (distToPlayer <= personality.engageRange && isInFrontAttackArea && attackRunSlotAvailable) {
             enemy.aiState = 'engage';
-            enemy.aiStateTimer = 3.2;
+            enemy.aiStateTimer = ATTACK_RUN_DURATION_SEC[personality.id];
           }
           break;
         }
         case 'engage': {
-          if (distToPlayer <= personality.minSafeDistance) {
-            this.beginReposition(enemy, targetPos, personality.preferredRange);
-          } else if (distToPlayer > personality.engageRange * 1.25) {
-            enemy.aiState = 'pursue';
-            enemy.aiStateTimer = 2.5;
-          } else if (enemy.aiStateTimer <= 0 && personality.flankAngleRad > 0.45) {
-            // Flankers/Defenders/Aces periodically switch attack side to avoid predictable tail-chasing
-            enemy.flankSign = enemy.flankSign === 1 ? -1 : 1;
-            enemy.aiStateTimer = Math.max(1.8, tuning.coordinationIntervalSec);
+          const runEndReason = getAttackRunEndReason(
+            distToPlayer,
+            personality.minSafeDistance,
+            _relativeFromTarget.dot(_targetForward),
+            personality.engageRange,
+            enemy.aiStateTimer,
+          );
+          if (runEndReason) {
+            // End only for a close pass, leaving the engagement envelope, or using the full run window.
+            this.beginReposition(enemy, targetPos, personality.preferredRange, _targetForward);
           }
           break;
         }
         case 'evade': {
           if (enemy.aiStateTimer <= 0) {
-            enemy.aiState = distToPlayer < personality.minSafeDistance * 1.2 ? 'reposition' : 'pursue';
-            enemy.aiStateTimer = 2.0;
+            if (distToPlayer < personality.minSafeDistance * 1.2) {
+              this.beginReposition(enemy, targetPos, personality.preferredRange, _targetForward);
+            } else {
+              enemy.aiState = 'pursue';
+              enemy.aiStateTimer = 2.0;
+            }
           }
           break;
         }
         case 'reposition': {
+          // Player heading can change while the enemy is breaking away. Keep the approach
+          // destination in the target's current world-space forward lane, not a stale snapshot.
+          this.setRepositionPoint(enemy, targetPos, personality.preferredRange, _targetForward);
           const distToAnchor = enemy.position.distanceTo(enemy.repositionPoint);
-          if (enemy.aiStateTimer <= 0 || (distToPlayer > personality.preferredRange * 0.95 && distToAnchor < 38)) {
+          if (distToAnchor < 38 || enemy.aiStateTimer <= 0) {
             enemy.aiState = 'pursue';
             enemy.aiStateTimer = 2.4;
           }
@@ -192,6 +252,8 @@ export class EnemyAIController {
           return out;
       }
     }
+
+    const attackRunCapacityAvailable = countActiveAttackRuns(allEnemies) < MAX_SIMULTANEOUS_ATTACK_RUNS;
 
     // 2. Compute Desired Flight Vector & Speed Based on Current AI State + Personality
     let targetSpeed = tuning.cruiseSpeed;
@@ -209,39 +271,60 @@ export class EnemyAIController {
       _desiredDir.copy(dirToPlayer);
       targetSpeed = tuning.cruiseSpeed * 0.85;
     } else if (enemy.aiState === 'pursue') {
-      // Apply personality flank offset (Aggressor flies nearly direct; Flanker curves wide)
-      _perp.crossVectors(dirToPlayer, _up);
-      if (_perp.lengthSq() < 0.01) _perp.set(1, 0, 0);
-      else _perp.normalize();
-
-      const flankScale = Math.sin(personality.flankAngleRad) * enemy.flankSign * THREE.MathUtils.clamp((distToPlayer - 80) / 160, 0.25, 1.0);
-      const bobY = Math.sin(now * 0.9 + enemy.patrolAngle) * 0.16;
-
-      _desiredDir
-        .copy(dirToPlayer)
-        .addScaledVector(_perp, flankScale)
-        .addScaledVector(_up, bobY)
-        .normalize();
-      targetSpeed = distToPlayer > personality.engageRange * 1.15 ? tuning.boostSpeed : tuning.cruiseSpeed;
+      // Rear-hemisphere enemies rendezvous at a forward-side waypoint instead of tracking the
+      // player's tail. Flankers keep a larger, fixed lateral offset on the way in.
+      if (!isInFrontAttackArea) {
+        const lateralScale = personality.id === 'flanker' ? 0.62 : personality.id === 'ace' ? 0.38 : personality.id === 'defender' ? 0.18 : 0.06;
+        _desiredPos.copy(targetPos)
+          .addScaledVector(_targetForward, personality.preferredRange * 0.72)
+          .addScaledVector(_targetRight, enemy.flankSign * personality.preferredRange * lateralScale);
+        _desiredDir.subVectors(_desiredPos, enemy.position).normalize();
+      } else {
+        if (!attackRunCapacityAvailable && distToPlayer <= personality.engageRange * 1.15) {
+          // Queue at a personality-specific forward-side staging point while another pair runs in.
+          const lateralScale = personality.id === 'aggressor' ? 0.12 : personality.id === 'flanker' ? 0.52 : personality.id === 'defender' ? 0.18 : 0.34;
+          _desiredPos.copy(targetPos)
+            .addScaledVector(_targetForward, personality.preferredRange * 1.08)
+            .addScaledVector(_targetRight, enemy.flankSign * personality.preferredRange * lateralScale);
+          _desiredDir.subVectors(_desiredPos, enemy.position).normalize();
+          targetSpeed = tuning.cruiseSpeed * 0.65;
+        } else {
+          _desiredDir.copy(dirToPlayer);
+          if (personality.id === 'flanker') {
+            _desiredDir.addScaledVector(_targetRight, enemy.flankSign * 0.24).normalize();
+          } else if (personality.id === 'ace') {
+            _desiredDir.addScaledVector(_targetRight, enemy.flankSign * 0.12).normalize();
+          }
+        }
+      }
+      if (attackRunCapacityAvailable || distToPlayer > personality.engageRange * 1.15) {
+        targetSpeed = distToPlayer > personality.engageRange * 1.15 ? tuning.boostSpeed : tuning.cruiseSpeed;
+      }
     } else if (enemy.aiState === 'engage') {
-      // Lead target slightly while orbiting/closing according to personality
+      // Commit to a short forward attack run; the state timer and rear-bearing check end it.
       const timeToHit = THREE.MathUtils.clamp(distToPlayer / Math.max(weapon.projectileSpeed, 1), 0, 1.4);
       _leadPoint.copy(targetPos).addScaledVector(targetVel, timeToHit * 0.72);
       _desiredDir.subVectors(_leadPoint, enemy.position).normalize();
 
-      if (personality.id === 'defender' && distToPlayer < personality.preferredRange) {
-        // Defender strafes laterally to hold standoff distance
-        _perp.crossVectors(dirToPlayer, _up).normalize();
-        _desiredDir.addScaledVector(_perp, enemy.flankSign * 0.65).normalize();
-      } else if (personality.id === 'flanker') {
-        _perp.crossVectors(dirToPlayer, _up).normalize();
-        _desiredDir.addScaledVector(_perp, enemy.flankSign * 0.35).normalize();
+      if (personality.id === 'flanker') {
+        _desiredDir.addScaledVector(_targetRight, enemy.flankSign * 0.18).normalize();
+      } else if (personality.id === 'ace') {
+        _desiredDir.addScaledVector(_targetRight, enemy.flankSign * 0.1).normalize();
+      } else if (personality.id === 'defender') {
+        const rangeError = distToPlayer - personality.preferredRange;
+        if (Math.abs(rangeError) <= 24) {
+          // Small tangent component preserves a stable standoff while keeping the guns near target.
+          _perp.crossVectors(dirToPlayer, _up).normalize();
+          _desiredDir.copy(dirToPlayer).addScaledVector(_perp, enemy.flankSign * 0.12).normalize();
+        } else if (rangeError < -24) {
+          _desiredDir.copy(dirToPlayer).negate();
+        }
       }
 
       targetSpeed =
         distToPlayer > personality.preferredRange
-          ? tuning.cruiseSpeed * 1.05
-          : tuning.cruiseSpeed * 0.82;
+          ? tuning.cruiseSpeed * 0.85
+          : tuning.cruiseSpeed * (personality.id === 'defender' ? 0.25 : 0.35);
     } else if (enemy.aiState === 'evade') {
       _desiredDir.copy(enemy.evadeDir);
       targetSpeed = tuning.boostSpeed;
@@ -303,7 +386,8 @@ export class EnemyAIController {
     // 6. Tactical Burst Weapon Firing (only when aligned & inside engage envelope)
     if (
       targetAlive &&
-      (enemy.aiState === 'engage' || (enemy.aiState === 'pursue' && distToPlayer < personality.engageRange * 1.05))
+      (enemy.aiState === 'engage' ||
+        (enemy.aiState === 'pursue' && attackRunCapacityAvailable && isInFrontAttackArea && distToPlayer < personality.engageRange * 1.05))
     ) {
       const timeToTarget = THREE.MathUtils.clamp(distToPlayer / Math.max(weapon.projectileSpeed, 1), 0, 1.3);
       _leadPoint.copy(targetPos).addScaledVector(targetVel, timeToTarget * 0.78);
@@ -353,26 +437,33 @@ export class EnemyAIController {
     enemy: EnemyEntity,
     playerPos: THREE.Vector3,
     preferredRange: number,
+    targetForward: THREE.Vector3,
   ): void {
     enemy.aiState = 'reposition';
-    enemy.aiStateTimer = 2.6;
+    enemy.aiStateTimer = 4.0;
     enemy.flankSign = enemy.flankSign === 1 ? -1 : 1;
 
-    _toPlayer.subVectors(enemy.position, playerPos);
-    if (_toPlayer.lengthSq() < 0.01) {
-      _toPlayer.set(0, 0, 1);
-    } else {
-      _toPlayer.normalize();
-    }
+    _targetRight.crossVectors(targetForward, _up);
+    if (_targetRight.lengthSq() < 0.01) _targetRight.set(1, 0, 0);
+    else _targetRight.normalize();
 
-    _perp.crossVectors(_toPlayer, _up);
-    if (_perp.lengthSq() < 0.01) _perp.set(1, 0, 0);
-    else _perp.normalize();
+    this.setRepositionPoint(enemy, playerPos, preferredRange, targetForward);
+  }
+
+  private setRepositionPoint(
+    enemy: EnemyEntity,
+    targetPos: THREE.Vector3,
+    preferredRange: number,
+    targetForward: THREE.Vector3,
+  ): void {
+    _targetRight.crossVectors(targetForward, _up);
+    if (_targetRight.lengthSq() < 0.01) _targetRight.set(1, 0, 0);
+    else _targetRight.normalize();
 
     enemy.repositionPoint
-      .copy(playerPos)
-      .addScaledVector(_toPlayer, preferredRange * 1.15)
-      .addScaledVector(_perp, enemy.flankSign * preferredRange * 0.65)
-      .addScaledVector(_up, (enemy.flankSign * 26));
+      .copy(targetPos)
+      .addScaledVector(targetForward, preferredRange * 0.72)
+      .addScaledVector(_targetRight, enemy.flankSign * preferredRange * (enemy.personality === 'flanker' ? 0.68 : 0.4))
+      .addScaledVector(_up, enemy.flankSign * 26);
   }
 }

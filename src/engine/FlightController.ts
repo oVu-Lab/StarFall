@@ -427,6 +427,11 @@ export class FlightController {
     return this.boostJustEngaged;
   }
 
+  /** Returns the hull's normalized world-space forward vector (local -Z). */
+  public getShipForwardWorld(out: THREE.Vector3): THREE.Vector3 {
+    return out.copy(_FORWARD_LOCAL).applyQuaternion(this.quaternion).normalize();
+  }
+
   /**
    * Returns the unit world-space centerline used for the weapon convergence point.
    * Alignment and direct modes use the ship boresight; the legacy joystick mode keeps its gimbal.
@@ -435,12 +440,10 @@ export class FlightController {
     if (this.steeringMode === 'mouse-alignment') {
       // This is the same physical ray that `syncAimProjection` projects for the HUD. There is
       // deliberately no fixed-FOV screen approximation in the firing path.
-      out.copy(_FORWARD_LOCAL).applyQuaternion(this.quaternion).normalize();
-      return out;
+      return this.getShipForwardWorld(out);
     }
     if (this.steeringMode === 'direct-nonlinear') {
-      out.copy(_FORWARD_LOCAL).applyQuaternion(this.quaternion).normalize();
-      return out;
+      return this.getShipForwardWorld(out);
     }
     const gimbalYaw = THREE.MathUtils.clamp(this.aimCursorX, -1, 1) * GIMBAL_MAX_YAW_RAD;
     const gimbalPitch = THREE.MathUtils.clamp(-this.aimCursorY, -1, 1) * GIMBAL_MAX_PITCH_RAD;

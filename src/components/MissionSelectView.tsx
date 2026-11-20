@@ -64,8 +64,8 @@ export function MissionSelectView({
 }: MissionSelectViewProps) {
   const reducedMotion = useReducedMotion();
   const launchingRef = useRef(false);
-  // Tracks whether the terminal has completed its initial 5-stage deployment.
-  // Subsequent mission selections trigger a faster data-sync transition inside the deployed terminal.
+  // First opening plays the Spatial Materialization sequence (~1080ms).
+  // Subsequent mission switches keep the existing fast data-sync transition unchanged.
   const [syncCount, setSyncCount] = useState(0);
   const isInitialDeploy = syncCount === 0;
 
@@ -102,7 +102,6 @@ export function MissionSelectView({
     onLaunchMission(selected);
   };
 
-  // Choreographed delays: Stage 4 (360-740ms) on initial deployment, fast (40-160ms) on mission switch
   const d = (initialSec: number, switchSec: number) =>
     reducedMotion ? 0 : isInitialDeploy ? initialSec : switchSec;
 
@@ -241,18 +240,31 @@ export function MissionSelectView({
           })}
         </motion.nav>
 
-        {/* Right: Machined Chamfered Obsidian Tactical Mission Terminal */}
+        {/* Right: Machined Chamfered Obsidian Tactical Mission Terminal — Spatial Materialization */}
         <div className="relative min-h-0 min-w-0 flex-1">
-          {/* STAGE 1 — Energy Signal Ignition Rail on the right anchor edge */}
-          <motion.div
-            initial={reducedMotion ? { opacity: 0 } : { scaleY: 0, opacity: 1 }}
-            animate={{ scaleY: 1, opacity: [1, 1, 0.22] }}
-            transition={{ duration: 0.65, times: [0, 0.45, 1], ease: TECH_EASE }}
-            className="pointer-events-none absolute inset-y-0 right-0 z-20 w-[2px] origin-top bg-[#38bdf8] shadow-[0_0_16px_#38bdf8]"
-            aria-hidden="true"
-          />
+          {/* STAGE 1 — Spatial Activation: Concentrated right-side emitter node + directional energy rays */}
+          {!reducedMotion && (
+            <>
+              <div
+                className="spatial-emitter-core pointer-events-none absolute left-[90%] top-1/2 z-30 h-8 w-8 rounded-full"
+                style={{
+                  background:
+                    'radial-gradient(circle, rgba(224,242,254,0.98) 0%, rgba(56,189,248,0.8) 32%, rgba(56,189,248,0) 72%)',
+                }}
+                aria-hidden="true"
+              />
+              <div
+                className="spatial-emitter-ray-v pointer-events-none absolute inset-y-0 left-[90%] z-20 w-[1.5px] -translate-x-1/2 origin-center bg-gradient-to-b from-transparent via-[#7dd3fc] to-transparent shadow-[0_0_12px_#38bdf8]"
+                aria-hidden="true"
+              />
+              <div
+                className="spatial-emitter-ray-h pointer-events-none absolute inset-x-0 top-1/2 z-20 h-[1.5px] -translate-y-1/2 origin-right bg-gradient-to-l from-[#e0f2fe] via-[#38bdf8] to-transparent shadow-[0_0_12px_#38bdf8]"
+                aria-hidden="true"
+              />
+            </>
+          )}
 
-          {/* STAGE 1B — Precision Chamfered SVG Perimeter Energy Trace */}
+          {/* STAGE 1B — Holographic Wireframe Boundary & Internal Structural Ribs */}
           <svg
             className="pointer-events-none absolute inset-0 z-20 h-full w-full"
             viewBox="0 0 1000 600"
@@ -260,34 +272,61 @@ export function MissionSelectView({
             aria-hidden="true"
           >
             <path
-              d="M 1000 0 L 22 0 L 0 22 L 0 600 L 978 600 L 1000 578 Z"
+              d="M 1000 300 L 1000 0 L 22 0 L 0 22 L 0 600 L 978 600 L 1000 578 L 1000 300"
               fill="none"
               stroke="#38bdf8"
               strokeWidth="2"
               vectorEffect="non-scaling-stroke"
               pathLength={1}
-              className="terminal-perimeter-path"
+              className="spatial-wireframe-path"
             />
+            {!reducedMotion && (
+              <>
+                <path
+                  d="M 1000 112 L 0 112"
+                  fill="none"
+                  stroke="#7dd3fc"
+                  strokeWidth="1"
+                  vectorEffect="non-scaling-stroke"
+                  pathLength={1}
+                  className="spatial-rib-path"
+                />
+                <path
+                  d="M 590 112 L 590 505"
+                  fill="none"
+                  stroke="#38bdf8"
+                  strokeWidth="1"
+                  vectorEffect="non-scaling-stroke"
+                  pathLength={1}
+                  className="spatial-rib-path"
+                />
+              </>
+            )}
           </svg>
 
-          {/* STAGE 2 — Layered Geometric Structural Deployment of the Obsidian Chassis */}
-          <motion.div
-            initial={
-              reducedMotion
-                ? { opacity: 0 }
-                : { opacity: 0.2, x: 26, clipPath: 'inset(0 0 0 100%)' }
-            }
-            animate={{ opacity: 1, x: 0, clipPath: 'inset(0 0 0 0%)' }}
-            transition={{ duration: 0.42, delay: reducedMotion ? 0 : 0.1, ease: TECH_EASE }}
-            className="obsidian-terminal obsidian-scroll relative flex h-full flex-col justify-between overflow-y-auto p-6 sm:p-7"
-          >
-            {/* STAGE 3 — Initial Vertical Optical Scan Beam across the assembled terminal */}
+          {/* STAGE 2A — Leading Holographic Blue Lattice unfolding ahead of solid obsidian */}
+          {!reducedMotion && (
             <div
-              className="terminal-deploy-scan pointer-events-none absolute inset-x-0 top-0 z-20 h-24"
+              className="spatial-holo-lattice pointer-events-none absolute inset-0 z-10"
               aria-hidden="true"
             />
+          )}
 
-            {/* Mission-Switch Fast Data-Sync Scan Beam (fires on subsequent switches only) */}
+          {/* STAGE 2B — Solid Polished Black Obsidian Terminal Materializing in 3D Depth */}
+          <div
+            className={`obsidian-terminal obsidian-scroll relative flex h-full flex-col justify-between overflow-y-auto p-6 sm:p-7 ${
+              reducedMotion ? '' : 'spatial-obsidian-entry'
+            }`}
+          >
+            {/* STAGE 3 — Power Synchronization Wave awakening obsidian reflections */}
+            {!reducedMotion && (
+              <div
+                className="spatial-power-wave pointer-events-none absolute inset-y-0 left-0 z-20 w-1/2"
+                aria-hidden="true"
+              />
+            )}
+
+            {/* Mission-Switch Fast Data-Sync Scan Beam (unchanged behavior for subsequent switches) */}
             {syncCount > 0 && (
               <div
                 key={`sync-${syncCount}`}
@@ -296,10 +335,10 @@ export function MissionSelectView({
               />
             )}
 
-            {/* Calm Ambient Left-Spine Energy Conduit (Stage 5 Ready State) */}
+            {/* Stage 5 — Calm Ambient Left-Spine Energy Conduit */}
             <ObsidianEnergySpine orientation="vertical" side="left" />
 
-            {/* STAGE 4 — Choreographed Mission Data Synchronization */}
+            {/* STAGE 4 — Choreographed Mission Data Appearance (Initial) / Fast Sync (Switching) */}
             <AnimatePresence mode="wait">
               <motion.section
                 key={selected.id}
@@ -312,9 +351,17 @@ export function MissionSelectView({
               >
                 <div className="flex flex-col gap-5">
                   {/* Top Tactical Header Deck */}
-                  <div className="flex flex-wrap items-end justify-between gap-4 border-b border-white/10 pb-4">
+                  <div className="relative flex flex-wrap items-end justify-between gap-4 pb-4">
+                    <motion.div
+                      initial={reducedMotion ? { scaleX: 1 } : { scaleX: 0 }}
+                      animate={{ scaleX: 1 }}
+                      transition={{ duration: 0.36, delay: d(0.52, 0.02), ease: TECH_EASE }}
+                      className="pointer-events-none absolute inset-x-0 bottom-0 h-px origin-right bg-gradient-to-l from-[#38bdf8]/65 via-white/15 to-transparent"
+                      aria-hidden="true"
+                    />
+
                     <div className="min-w-0">
-                      {/* 4.1 Mission Identifier & Callsign (Clip-wipe reveal) */}
+                      {/* 4.1 Operation Identifier & Sector — Precision horizontal aperture wipe */}
                       <motion.div
                         initial={
                           reducedMotion
@@ -322,7 +369,7 @@ export function MissionSelectView({
                             : { opacity: 0, clipPath: 'inset(0 100% 0 0)' }
                         }
                         animate={{ opacity: 1, clipPath: 'inset(0 0% 0 0)' }}
-                        transition={{ duration: 0.24, delay: d(0.36, 0.02), ease: TECH_EASE }}
+                        transition={{ duration: 0.24, delay: d(0.56, 0.02), ease: TECH_EASE }}
                         className="flex flex-wrap items-center gap-2 font-mono text-[10px] uppercase tracking-[0.26em] text-[#38bdf8]"
                       >
                         <span className="border border-[#38bdf8]/45 bg-[#38bdf8]/10 px-1.5 py-0.5 font-semibold text-[#bae6fd]">
@@ -333,11 +380,15 @@ export function MissionSelectView({
                         <span className="text-slate-400">{selected.environment.sectorName}</span>
                       </motion.div>
 
-                      {/* 4.2 Hero Mission Title (Directional slide) */}
+                      {/* 4.2 Hero Mission Title — Masked baseline rise */}
                       <motion.h2
-                        initial={reducedMotion ? { opacity: 0 } : { opacity: 0, x: 18 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ duration: 0.26, delay: d(0.42, 0.05), ease: TECH_EASE }}
+                        initial={
+                          reducedMotion
+                            ? { opacity: 0 }
+                            : { opacity: 0, y: 12, clipPath: 'inset(0 0 100% 0)' }
+                        }
+                        animate={{ opacity: 1, y: 0, clipPath: 'inset(0 0 0% 0)' }}
+                        transition={{ duration: 0.28, delay: d(0.61, 0.05), ease: TECH_EASE }}
                         className="mt-2 font-display text-3xl font-bold uppercase tracking-[0.06em] text-slate-50 sm:text-4xl"
                       >
                         {selected.name}
@@ -346,9 +397,9 @@ export function MissionSelectView({
 
                     {/* 4.3 Threat Level Segments + Status + Best Rank */}
                     <motion.div
-                      initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.24, delay: d(0.47, 0.08), ease: TECH_EASE }}
+                      initial={reducedMotion ? { opacity: 0 } : { opacity: 0, x: 10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ duration: 0.24, delay: d(0.66, 0.08), ease: TECH_EASE }}
                       className="flex items-center gap-3.5"
                     >
                       {selectedRecord?.bestRank && (
@@ -375,7 +426,6 @@ export function MissionSelectView({
                             {DIFFICULTY_PROFILES[selected.difficulty].label}
                           </span>
                         </div>
-                        {/* 5-segment real threat meter driven by difficultyNumeric (1..5) */}
                         <div
                           className="mt-1.5 flex items-center gap-1"
                           aria-label={`Difficulty ${selected.difficultyNumeric} of 5`}
@@ -404,13 +454,13 @@ export function MissionSelectView({
                       <motion.p
                         initial={reducedMotion ? { opacity: 0 } : { opacity: 0, x: 10 }}
                         animate={{ opacity: 1, x: 0 }}
-                        transition={{ duration: 0.22, delay: d(0.5, 0.08), ease: TECH_EASE }}
+                        transition={{ duration: 0.22, delay: d(0.68, 0.08), ease: TECH_EASE }}
                         className="border-l border-[#38bdf8]/40 pl-3.5 text-xs leading-relaxed text-slate-300 sm:text-[13px]"
                       >
                         {selected.description}
                       </motion.p>
 
-                      {/* 4.4 Primary Operational Directives */}
+                      {/* 4.4 Primary Operational Directives — Synchronized horizontal clip-wipe */}
                       <div>
                         <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.24em] text-[#38bdf8]">
                           <Crosshair className="h-3.5 w-3.5" />
@@ -420,11 +470,15 @@ export function MissionSelectView({
                           {primaryObjectives.map((obj, idx) => (
                             <motion.li
                               key={obj.id}
-                              initial={reducedMotion ? { opacity: 0 } : { opacity: 0, x: 14 }}
-                              animate={{ opacity: 1, x: 0 }}
+                              initial={
+                                reducedMotion
+                                  ? { opacity: 0 }
+                                  : { opacity: 0, x: 10, clipPath: 'inset(0 100% 0 0)' }
+                              }
+                              animate={{ opacity: 1, x: 0, clipPath: 'inset(0 0% 0 0)' }}
                               transition={{
-                                duration: 0.2,
-                                delay: d(0.54 + idx * 0.04, 0.1 + idx * 0.03),
+                                duration: 0.22,
+                                delay: d(0.72 + idx * 0.04, 0.1 + idx * 0.03),
                                 ease: TECH_EASE,
                               }}
                               className="flex items-center justify-between gap-3 py-2.5 text-xs text-slate-100"
@@ -443,12 +497,12 @@ export function MissionSelectView({
                         </ul>
                       </div>
 
-                      {/* 4.5 Optional Directives (when present) */}
+                      {/* 4.5 Bonus Directives (when present) */}
                       {optionalObjectives.length > 0 && (
                         <motion.div
                           initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 8 }}
                           animate={{ opacity: 1, y: 0 }}
-                          transition={{ duration: 0.22, delay: d(0.64, 0.14), ease: TECH_EASE }}
+                          transition={{ duration: 0.22, delay: d(0.8, 0.14), ease: TECH_EASE }}
                         >
                           <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.24em] text-amber-300/90">
                             <Sparkles className="h-3.5 w-3.5" />
@@ -471,15 +525,15 @@ export function MissionSelectView({
                       )}
                     </div>
 
-                    {/* Right (~5 cols): Real Data-Driven Tactical Sector Schematic + Compact Specs */}
+                    {/* Right (~5 cols): Optical Well opens via horizontal aperture iris */}
                     <motion.div
                       initial={
                         reducedMotion
                           ? { opacity: 0 }
-                          : { opacity: 0, clipPath: 'inset(0 0 100% 0)' }
+                          : { opacity: 0, clipPath: 'inset(0 50% 0 50%)' }
                       }
-                      animate={{ opacity: 1, clipPath: 'inset(0 0 0% 0)' }}
-                      transition={{ duration: 0.3, delay: d(0.46, 0.08), ease: TECH_EASE }}
+                      animate={{ opacity: 1, clipPath: 'inset(0 0% 0 0%)' }}
+                      transition={{ duration: 0.3, delay: d(0.66, 0.08), ease: TECH_EASE }}
                       className="flex flex-col gap-3 xl:col-span-5"
                     >
                       <TacticalSectorMap mission={selected} />
@@ -515,11 +569,11 @@ export function MissionSelectView({
                   </div>
                 </div>
 
-                {/* STAGE 4.6 & 5 — Rewards Strip & Armed Deployment Activation Deck */}
+                {/* STAGE 5 — Ready State: Rewards Strip & Armed Deployment Control */}
                 <motion.div
-                  initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 10 }}
+                  initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.24, delay: d(0.7, 0.16), ease: TECH_EASE }}
+                  transition={{ duration: 0.24, delay: d(0.84, 0.16), ease: TECH_EASE }}
                   className="flex flex-col gap-3 border-t border-white/10 pt-4 sm:flex-row sm:items-center sm:justify-between"
                 >
                   <div className="min-w-0 font-mono">
@@ -559,7 +613,7 @@ export function MissionSelectView({
                 </motion.div>
               </motion.section>
             </AnimatePresence>
-          </motion.div>
+          </div>
         </div>
       </div>
     </div>

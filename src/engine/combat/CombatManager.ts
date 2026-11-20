@@ -89,6 +89,7 @@ const _upVec = new THREE.Vector3();
 const _forwardVec = new THREE.Vector3();
 const _transportDelta = new THREE.Vector3();
 const _zeroVelocity = new THREE.Vector3();
+const _combatTargetForward = new THREE.Vector3();
 
 function projectShieldImpact(
   center: THREE.Vector3,
@@ -594,6 +595,13 @@ export class CombatManager {
       const targetProtectedActor = targetRelay || targetTransport;
       const targetPosition = targetRelay ? this.relay!.position : targetTransport ? this.transport!.position : flight.position;
       const targetVelocity = targetRelay ? _zeroVelocity : targetTransport ? this.transport!.velocity : flight.velocity;
+      if (targetProtectedActor) {
+        _combatTargetForward.copy(targetVelocity);
+        if (_combatTargetForward.lengthSq() > 16) _combatTargetForward.normalize();
+        else _combatTargetForward.set(0, 0, 0);
+      } else {
+        flight.getShipForwardWorld(_combatTargetForward);
+      }
       const aiRes = this.ai.updateEnemy(
         enemy,
         safeDt,
@@ -603,6 +611,7 @@ export class CombatManager {
         targetProtectedActor ? true : playerAlive,
         this.projectiles,
         this.enemies,
+        _combatTargetForward.lengthSq() > 0.01 ? _combatTargetForward : undefined,
       );
 
       if (aiRes.fired) {
