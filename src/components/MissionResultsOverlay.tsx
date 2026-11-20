@@ -74,7 +74,7 @@ export function MissionResultsOverlay({
             </div>
           ) : (
             <div className="border border-red-500/50 bg-red-950/40 px-4 py-2 font-display text-lg font-bold tracking-wider text-red-300">
-              HULL LOST
+              {result.transportRemainingHullPct === 0 ? 'TRANSPORT LOST' : 'HULL LOST'}
             </div>
           )}
         </div>
@@ -95,6 +95,17 @@ export function MissionResultsOverlay({
               {result.enemiesDefeated} / {result.totalEnemies}
             </div>
           </div>
+          {result.transportRemainingHullPct != null && (
+            <div className="border border-amber-700/50 bg-[#17130a] px-3.5 py-3">
+              <div className="text-[11px] text-amber-300/80">Transport Hull</div>
+              <div className="mt-1 font-mono text-base font-semibold text-amber-200">
+                {result.transportRemainingHullPct}% remaining
+              </div>
+              <div className="font-mono text-[10px] text-slate-500">
+                {result.status === 'completed' ? 'Reached extraction' : 'Lost before extraction'}
+              </div>
+            </div>
+          )}
           <div className="border border-slate-800 bg-[#081226] px-3.5 py-3">
             <div className="text-[11px] text-slate-400">Accuracy</div>
             <div className="mt-1 font-mono text-base font-semibold text-cyan-300">

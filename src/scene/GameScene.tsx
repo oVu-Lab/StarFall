@@ -23,6 +23,7 @@ import { EnemyShipRenderer } from './EnemyShipRenderer';
 import { buildShipModel } from './shipGeometry';
 import { SpaceEnvironment } from './SpaceEnvironment';
 import { SpeedLinesVFX } from './SpeedLinesVFX';
+import { TransportRenderer } from './TransportRenderer';
 
 interface GameSceneProps {
   phase: GamePhase;
@@ -139,6 +140,7 @@ export function GameScene({
         AudioManager.playEnemyLaser(dist);
       },
       onDamage: (evt) => {
+        missionManager.handleDamage(evt);
         if (evt.targetId === PLAYER_ENTITY_ID) {
           AudioManager.playPlayerDamage();
         } else {
@@ -353,6 +355,8 @@ export function GameScene({
         graphics={graphics}
         playerPosition={flight.position}
       />
+
+      <TransportRenderer combat={combat} visible={combatVisible} />
 
       <CombatVFX
         ref={vfxRef}

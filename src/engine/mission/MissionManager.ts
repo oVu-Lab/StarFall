@@ -1,7 +1,8 @@
 import type * as THREE from 'three';
 import { DIFFICULTY_PROFILES } from '../../config/difficulty';
 import { getNextMission } from '../../config/missions';
-import type { DestructionEvent } from '../../types/combat';
+import type { DamageEvent, DestructionEvent } from '../../types/combat';
+import { TRANSPORT_ENTITY_ID } from '../combat/CombatManager';
 import type {
   MissionDefinition,
   MissionHudSnapshot,
@@ -39,6 +40,7 @@ export class MissionManager {
   private announcementTimer = 0;
   private lastPublishedWholeSec = -1;
   private callbacks: MissionManagerCallbacks = {};
+  private transportHud: MissionHudSnapshot['transport'] = null;
 
   public setCallbacks(callbacks: MissionManagerCallbacks): void {
     this.callbacks = callbacks;
@@ -65,6 +67,7 @@ export class MissionManager {
       objectives: this.objectives.map((o) => ({ ...o })),
       announcement: this.announcement,
       announcementKind: this.announcementKind,
+      transport: this.transportHud ? { ...this.transportHud } : null,
     };
   }
 
@@ -97,6 +100,18 @@ export class MissionManager {
     }));
 
     combat.clearCombatState(playerMaxHull, true);
+
+    if (mission.escort) {
+      combat.initializeTransport(mission.escort.callsign, mission.escort.maxHull, mission.escort.route, playerPos);
+      this.transportHud = {
+        callsign: mission.escort.callsign,
+        currentHull: mission.escort.maxHull,
+        maxHull: mission.escort.maxHull,
+        progress: 0,
+      };
+    } else {
+      this.transportHud = null;
+    }
 
     const firstWave = mission.waves[0];
     if (firstWave) {
@@ -141,11 +156,35 @@ export class MissionManager {
     }
   }
 
+  public handleDamage(evt: DamageEvent): void {
+    if (this.status !== 'active' || evt.targetId !== TRANSPORT_ENTITY_ID) return;
+    if (this.transportHud) {
+      this.transportHud.currentHull = evt.remainingHealth;
+      this.transportHud.maxHull = evt.maxHealth;
+    }
+    const warning = evt.destroyed
+      ? 'TRANSPORT HULL CRITICAL · EXTRACTION COMPROMISED'
+      : `TRANSPORT HIT · ${Math.ceil(evt.remainingHealth)} HULL REMAINING`;
+    this.setAnnouncement(warning, 'warning', 2.2);
+    this.emitHud();
+  }
+
   public update(dt: number, combat: CombatManager, playerPos: THREE.Vector3): void {
     if (this.status !== 'active' || !this.mission) return;
 
     const safeDt = Math.min(Math.max(dt, 0.0001), 0.05);
     this.elapsedSec += safeDt;
+    combat.updateTransport(safeDt);
+    if (combat.transport && this.transportHud) {
+      this.transportHud.currentHull = combat.transport.health.current;
+      this.transportHud.maxHull = combat.transport.health.max;
+      this.transportHud.progress = combat.transport.progress;
+    }
+
+    if (this.mission.escort && combat.transport?.health.isDestroyed) {
+      this.finishMission('failed', combat);
+      return;
+    }
 
     let shouldEmitHud = false;
 
@@ -184,7 +223,7 @@ export class MissionManager {
       const hasTimedObjective = this.objectives.some(
         (o) => o.type === 'survive_duration' && o.status === 'active',
       );
-      if (hasTimedObjective) {
+      if (hasTimedObjective || this.transportHud) {
         shouldEmitHud = true;
       }
     }
@@ -276,6 +315,18 @@ export class MissionManager {
         if (obj.elapsedSec >= obj.targetDurationSec) {
           obj.status = 'completed';
         }
+      } else if (obj.type === 'escort_transport') {
+        const transport = combat.transport;
+        obj.currentCount = transport && transport.progress >= 1 ? 1 : 0;
+        if (
+          obj.status === 'active' &&
+          transport &&
+          transport.progress >= 1 &&
+          !transport.health.isDestroyed
+        ) {
+          obj.status = 'completed';
+          this.setAnnouncement('TRANSPORT EXTRACTED · OPERATION COMPLETE', 'complete', 4);
+        }
       }
 
       if (obj.status !== 'completed') {
@@ -311,6 +362,9 @@ export class MissionManager {
       timeTakenSec: this.elapsedSec,
       parTimeSec: this.mission.parTimeSec,
       completed,
+      transportRemainingRatio: combat.transport
+        ? combat.transport.health.current / combat.transport.health.max
+        : undefined,
     });
 
     const nextMission = completed ? getNextMission(this.mission.id) : null;
@@ -335,6 +389,9 @@ export class MissionManager {
       timeTakenSec: this.elapsedSec,
       damageReceived: Math.round(combat.stats.damageTaken),
       remainingHullPct: Math.round((remainingHull / maxHull) * 100),
+      transportRemainingHullPct: combat.transport
+        ? Math.round((combat.transport.health.current / combat.transport.health.max) * 100)
+        : null,
       unlockedNextMissionId: nextMission?.id ?? null,
       unlockedNextMissionName: nextMission ? `${nextMission.code} — ${nextMission.name}` : null,
       isNewBestRank: false,

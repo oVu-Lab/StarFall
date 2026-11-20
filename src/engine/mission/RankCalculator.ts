@@ -12,6 +12,7 @@ export interface RankCalculationInput {
   timeTakenSec: number;
   parTimeSec: number;
   completed: boolean;
+  transportRemainingRatio?: number;
 }
 
 export const RANK_THRESHOLDS: Record<MissionRank, number> = {
@@ -61,9 +62,13 @@ export function calculateMissionScore(input: RankCalculationInput): MissionScore
   const hullRatio =
     input.maxHull > 0 ? Math.max(0, Math.min(1, input.remainingHull / input.maxHull)) : 0;
   const lowDamageFactor = Math.max(0, 1 - input.damageReceived / Math.max(input.maxHull * 1.2, 1));
+  const transportRatio = input.transportRemainingRatio == null
+    ? 1
+    : Math.max(0, Math.min(1, input.transportRemainingRatio));
+  const hullSurvival = hullRatio * 0.65 + lowDamageFactor * 0.35;
   const survivalScore = input.completed
-    ? Math.round((hullRatio * 0.65 + lowDamageFactor * 0.35) * 200)
-    : Math.round(hullRatio * 80);
+    ? Math.round((input.transportRemainingRatio == null ? hullSurvival : hullSurvival * 0.55 + transportRatio * 0.45) * 200)
+    : Math.round((input.transportRemainingRatio == null ? hullRatio : hullRatio * 0.55 + transportRatio * 0.45) * 80);
 
   let timeScore = 0;
   if (input.completed) {

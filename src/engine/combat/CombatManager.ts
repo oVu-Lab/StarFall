@@ -10,6 +10,7 @@ import type {
   ProjectedEnemyMarker,
   WeaponConfig,
   WeaponFireEvent,
+  TransportEntity,
 } from '../../types/combat';
 import { DIFFICULTY_PROFILES } from '../../config/difficulty';
 import type { BotPersonality, FlightTelemetry } from '../../types/game';
@@ -20,11 +21,20 @@ import { intersectSegmentSphere, intersectSphereSphere } from './CollisionSystem
 import { EnemyAIController } from './EnemyAIController';
 import { applyDamage, createHealthState, getHealthRatio, resetHealthState } from './HealthSystem';
 import { ProjectilePool } from './ProjectilePool';
+import { advanceEvasion, advanceLock, canLaunchMissile, canMissileDamageTarget, isIncomingMissile, shouldAiUseMissile, steerMissile } from './MissileRules';
 
 export const PLAYER_ENTITY_ID = 'player-1';
 export const PLAYER_COLLISION_RADIUS = 3.2;
 export const ENEMY_COLLISION_RADIUS = 3.6;
 export const MAX_ENEMIES = 6;
+export const TRANSPORT_ENTITY_ID = 'transport-1';
+
+export function shouldEnemyTargetTransport(
+  personality: string,
+  transportActive: boolean,
+): boolean {
+  return transportActive && (personality === 'aggressor' || personality === 'defender');
+}
 
 export interface VfxBurstEvent {
   kind: 'impact' | 'explosion' | 'player-hit';
@@ -54,6 +64,13 @@ const _leadWorld = new THREE.Vector3();
 const _rightVec = new THREE.Vector3();
 const _upVec = new THREE.Vector3();
 const _forwardVec = new THREE.Vector3();
+const _transportDelta = new THREE.Vector3();
+const MISSILE_WEAPON: WeaponConfig = {
+  id: 'homing-missile', name: 'HOMING MISSILE', fireRate: 0.2, projectileSpeed: 68,
+  damage: 34, lifetime: 6.5, hitRadius: 2.8, convergenceDistance: 100, spreadRad: 0,
+  muzzleOffsets: [[0, 0, -2.8]], boltLength: 3.2, boltRadius: 0.42,
+  color: '#fb923c', coreColor: '#fff7ed',
+};
 
 const CALLSIGN_POOL = [
   'VEX-01',
@@ -72,6 +89,7 @@ const CALLSIGN_POOL = [
 export class CombatManager {
   public readonly projectiles = new ProjectilePool(160);
   public readonly enemies: EnemyEntity[] = [];
+  public transport: TransportEntity | null = null;
   public readonly playerHealth: HealthState;
   public readonly stats: CombatStats = {
     kills: 0,
@@ -102,6 +120,10 @@ export class CombatManager {
   private muzzleFlashRight = 0;
   private cameraImpulse = 0;
   private primaryTargetId: string | null = null;
+  private lockTargetId: string | null = null;
+  private lockProgress = 0;
+  private lockEscapedTimer = 0;
+  private missilesRemaining = 4;
 
   public constructor(playerMaxHull: number) {
     this.playerHealth = createHealthState(playerMaxHull);
@@ -136,6 +158,7 @@ export class CombatManager {
     resetHealthState(this.playerHealth, playerMaxHull);
     this.projectiles.clear();
     this.enemies.length = 0;
+    this.transport = null;
     this.playerWeaponCooldown = 0;
     this.playerMuzzleIndex = 0;
     this.simTime = 0;
@@ -147,6 +170,10 @@ export class CombatManager {
     this.muzzleFlashRight = 0;
     this.cameraImpulse = 0;
     this.primaryTargetId = null;
+    this.lockTargetId = null;
+    this.lockProgress = 0;
+    this.lockEscapedTimer = 0;
+    this.missilesRemaining = 4;
 
     this.stats.kills = 0;
     this.stats.shotsFired = 0;
@@ -215,6 +242,9 @@ export class CombatManager {
         repositionPoint: spawnPos.clone(),
         hitFlashTimer: 0,
         muzzleFlashTimer: 0,
+        targetTransport: shouldEnemyTargetTransport(spec.personality, Boolean(this.transport?.active)),
+        missileLockTimer: 0,
+        missileCooldown: 8 + i * 5,
       };
       this.enemies.push(enemy);
     }
@@ -286,11 +316,67 @@ export class CombatManager {
         repositionPoint: spawnPos.clone(),
         hitFlashTimer: 0,
         muzzleFlashTimer: 0,
+        targetTransport: false,
+        missileLockTimer: 0,
+        missileCooldown: 8 + i * 5,
       };
       this.enemies.push(enemy);
     }
 
     this.stats.activeEnemies = this.enemies.length;
+  }
+
+  public initializeTransport(
+    callsign: string,
+    maxHull: number,
+    route: Array<[number, number, number]>,
+    origin: THREE.Vector3,
+  ): void {
+    const points = route.map(
+      ([x, y, z]) => new THREE.Vector3(origin.x + x, origin.y + y, origin.z + z),
+    );
+    const position = points[0]?.clone() ?? origin.clone();
+    this.transport = {
+      callsign, active: true, position, quaternion: new THREE.Quaternion(),
+      velocity: new THREE.Vector3(), health: createHealthState(maxHull), collisionRadius: 11,
+      route: points, routeIndex: 1, progress: points.length > 1 ? 0 : 1, hitFlashTimer: 0,
+    };
+    for (const enemy of this.enemies) {
+      enemy.targetTransport = shouldEnemyTargetTransport(enemy.personality, true);
+    }
+  }
+
+  public updateTransport(dt: number): void {
+    const transport = this.transport;
+    if (!transport?.active || transport.health.isDestroyed || transport.route.length < 2) return;
+    const target = transport.route[transport.routeIndex];
+    if (!target) {
+      transport.progress = 1;
+      return;
+    }
+    const delta = _transportDelta.subVectors(target, transport.position);
+    const distance = delta.length();
+    const speed = 22;
+    if (distance <= speed * dt) {
+      transport.position.copy(target);
+      transport.routeIndex += 1;
+      transport.progress = transport.routeIndex >= transport.route.length
+        ? 1
+        : (transport.routeIndex - 1) / (transport.route.length - 1);
+      if (transport.progress >= 1) transport.velocity.set(0, 0, 0);
+    } else {
+      transport.velocity.copy(delta).normalize().multiplyScalar(speed);
+      transport.position.addScaledVector(transport.velocity, dt);
+      _forwardVec.copy(delta).normalize();
+      transport.quaternion.setFromUnitVectors(_transportDelta.set(0, 0, -1), _forwardVec);
+      const segmentLength = Math.max(1, transport.route[transport.routeIndex - 1]?.distanceTo(target) ?? 1);
+      transport.progress = THREE.MathUtils.clamp(
+        (transport.routeIndex - 1 + (1 - distance / segmentLength)) / (transport.route.length - 1),
+        0,
+        1,
+      );
+    }
+    if (transport.hitFlashTimer > 0) transport.hitFlashTimer = Math.max(0, transport.hitFlashTimer - dt);
   }
 
   /**
@@ -331,6 +417,10 @@ export class CombatManager {
 
     const playerAlive = !this.playerHealth.isDestroyed;
 
+    if (this.lockEscapedTimer > 0) this.lockEscapedTimer = Math.max(0, this.lockEscapedTimer - safeDt);
+    if (playerAlive && input.missilePressed) this.launchPlayerMissile(flight);
+    this.updateHomingMissiles(safeDt, flight, playerAlive);
+
     // 1. Player Primary Weapon Firing (exact convergence onto 3D aiming reticle ray!)
     let isFiring = false;
     if (playerAlive && input.firePrimary) {
@@ -350,13 +440,16 @@ export class CombatManager {
       if (!enemy.active || enemy.health.isDestroyed) continue;
       aliveEnemies += 1;
 
+      const targetTransport = enemy.targetTransport && this.transport?.active && !this.transport.health.isDestroyed;
+      const targetPosition = targetTransport ? this.transport!.position : flight.position;
+      const targetVelocity = targetTransport ? this.transport!.velocity : flight.velocity;
       const aiRes = this.ai.updateEnemy(
         enemy,
         safeDt,
         this.simTime,
-        flight.position,
-        flight.velocity,
-        playerAlive,
+        targetPosition,
+        targetVelocity,
+        targetTransport ? true : playerAlive,
         this.projectiles,
         this.enemies,
       );
@@ -372,6 +465,7 @@ export class CombatManager {
           timestamp: this.simTime,
         });
       }
+      this.updateEnemyMissile(enemy, targetTransport ? null : flight.position, playerAlive, safeDt);
     }
 
     // 4. Swept Collision Detection (Projectiles vs Enemies & Player)
@@ -429,7 +523,109 @@ export class CombatManager {
 
     if (camera) {
       this.projectHudTelemetry(flight, camera, telemetry);
+      this.updatePlayerLock(safeDt, telemetry);
     }
+    this.updateMissileHud(telemetry, camera);
+  }
+
+  private updatePlayerLock(dt: number, telemetry: FlightTelemetry): void {
+    const halfW = telemetry.aimBoundaryWidthPx / Math.max(1, telemetry.viewportWidthPx) * 0.5;
+    const halfH = telemetry.aimBoundaryHeightPx / Math.max(1, telemetry.viewportHeightPx) * 0.5;
+    const aimX = telemetry.boresightScreenX;
+    const aimY = telemetry.boresightScreenY;
+    let candidate: ProjectedEnemyMarker | null = null;
+    let best = Infinity;
+    for (const marker of telemetry.enemyMarkers) {
+      if (!marker.active || !marker.inFront || !marker.onScreen) continue;
+      const dx = marker.screenX - 0.5;
+      const dy = marker.screenY - 0.5;
+      const inBoundary = Math.abs(dx) <= halfW && Math.abs(dy) <= halfH;
+      if (!inBoundary) continue;
+      const score = Math.hypot(marker.screenX - aimX, marker.screenY - aimY);
+      if (score < best) { best = score; candidate = marker; }
+    }
+
+    const sameTarget = Boolean(candidate && candidate.entityId === this.lockTargetId);
+    const lockStep = advanceLock(this.lockProgress, sameTarget, dt);
+    if (lockStep.escaped) this.lockEscapedTimer = 1.2;
+    if (!sameTarget) this.lockTargetId = candidate?.entityId ?? null;
+    this.lockProgress = candidate ? lockStep.progress : 0;
+    const locked = this.enemies.find((e) => e.id === this.lockTargetId && e.active && !e.health.isDestroyed);
+    if (!locked) { this.lockTargetId = null; this.lockProgress = 0; }
+    telemetry.missileHud.lockProgress = this.lockProgress / 3;
+    telemetry.missileHud.lockTargetName = locked?.callsign ?? '';
+    telemetry.missileHud.lockReady = Boolean(locked && this.lockProgress >= 3);
+    telemetry.missileHud.lockEscaped = this.lockEscapedTimer > 0;
+    telemetry.missileHud.missilesRemaining = this.missilesRemaining;
+  }
+
+  private launchPlayerMissile(flight: FlightController): void {
+    if (!this.lockTargetId) return;
+    const target = this.enemies.find((e) => e.id === this.lockTargetId && e.active && !e.health.isDestroyed);
+    if (!target || !canLaunchMissile(this.lockProgress, true, this.missilesRemaining)) return;
+    const forward = _forwardVec.set(0, 0, -1).applyQuaternion(flight.quaternion).normalize();
+    const origin = _muzzleWorld.copy(flight.position).addScaledVector(forward, 2.8);
+    const missile = this.projectiles.spawn(PLAYER_ENTITY_ID, 'player', MISSILE_WEAPON, origin, forward, flight.velocity);
+    missile.isHomingMissile = true;
+    missile.targetId = target.id;
+    missile.launcherForward!.copy(forward);
+    this.missilesRemaining -= 1;
+    this.lockProgress = 0;
+    this.lockTargetId = null;
+    this.callbacks.onVfxBurst?.({ kind: 'impact', position: origin, color: '#fb923c', scale: 1.35 });
+  }
+
+  private updateEnemyMissile(enemy: EnemyEntity, playerPosition: THREE.Vector3 | null, playerAlive: boolean, dt: number): void {
+    if (!shouldAiUseMissile(enemy.personality)) return;
+    enemy.missileCooldown = Math.max(0, (enemy.missileCooldown ?? 0) - dt);
+    if (!playerAlive || !playerPosition || enemy.missileCooldown! > 0) { enemy.missileLockTimer = 0; return; }
+    const distance = enemy.position.distanceTo(playerPosition);
+    _aimDir.subVectors(playerPosition, enemy.position).normalize();
+    const forward = _forwardVec.set(0, 0, -1).applyQuaternion(enemy.quaternion);
+    if (distance > 520 || forward.dot(_aimDir) < 0.94) { enemy.missileLockTimer = 0; return; }
+    enemy.missileLockTimer = (enemy.missileLockTimer ?? 0) + dt;
+    if (enemy.missileLockTimer < 1.8) return;
+    const origin = _muzzleWorld.copy(enemy.position).addScaledVector(forward, 3.2);
+    const missile = this.projectiles.spawn(enemy.id, 'enemy', MISSILE_WEAPON, origin, forward, enemy.velocity);
+    missile.isHomingMissile = true;
+    missile.targetId = PLAYER_ENTITY_ID;
+    missile.launcherForward!.copy(forward);
+    enemy.missileCooldown = enemy.personality === 'ace' ? 18 : 28;
+    enemy.missileLockTimer = 0;
+    this.callbacks.onEnemyFire?.({ shooterId: enemy.id, faction: 'enemy', weaponId: MISSILE_WEAPON.id, origin, direction: forward, timestamp: this.simTime });
+  }
+
+  private updateHomingMissiles(dt: number, flight: FlightController, playerAlive: boolean): void {
+    for (const missile of this.projectiles.items) {
+      if (!missile.active || !missile.isHomingMissile) continue;
+      if (missile.targetLost) continue;
+      const targetEnemy = this.enemies.find((e) => e.id === missile.targetId && e.active && !e.health.isDestroyed);
+      const targetValid = missile.targetId === PLAYER_ENTITY_ID ? playerAlive : Boolean(targetEnemy);
+      if (!targetValid) { missile.targetLost = true; continue; }
+      const targetPos = missile.targetId === PLAYER_ENTITY_ID ? flight.position : targetEnemy!.position;
+      const targetVelocity = missile.targetId === PLAYER_ENTITY_ID ? flight.velocity : targetEnemy!.velocity;
+      missile.evasionProgress = advanceEvasion(missile.evasionProgress ?? 0, targetVelocity, missile.launcherForward!, dt);
+      if ((missile.evasionProgress ?? 0) >= 0.26) { missile.targetLost = true; continue; }
+      _aimTarget.subVectors(targetPos, missile.position).normalize();
+      steerMissile(missile.direction, _aimTarget, dt);
+      missile.velocity.copy(missile.direction).multiplyScalar(MISSILE_WEAPON.projectileSpeed);
+    }
+  }
+
+  private updateMissileHud(telemetry: FlightTelemetry, camera?: THREE.PerspectiveCamera): void {
+    const hud = telemetry.missileHud;
+    let threatening = false;
+    for (const missile of this.projectiles.items) {
+      if (!isIncomingMissile(missile.active, Boolean(missile.isHomingMissile), missile.targetId, PLAYER_ENTITY_ID, Boolean(missile.targetLost))) continue;
+      threatening = true;
+      if (camera) {
+        _projVec.copy(missile.position).project(camera);
+        hud.incomingX = THREE.MathUtils.clamp((_projVec.x + 1) * 0.5, 0.04, 0.96);
+        hud.incomingY = THREE.MathUtils.clamp((1 - _projVec.y) * 0.5, 0.05, 0.95);
+      }
+      break;
+    }
+    hud.incomingMissile = threatening;
   }
 
   private firePlayerWeapon(flight: FlightController): void {
@@ -519,13 +715,14 @@ export class CombatManager {
     for (let i = 0; i < items.length; i++) {
       const p = items[i];
       if (!p.active) continue;
+      if (p.isHomingMissile && p.targetLost) continue;
 
       if (p.faction === 'player') {
         // Player projectile -> check active non-destroyed enemies (strictly never damages player!)
         for (let j = 0; j < this.enemies.length; j++) {
           const enemy = this.enemies[j];
           if (!enemy.active || enemy.health.isDestroyed) continue;
-          if (p.ownerId === enemy.id) continue;
+          if (!canMissileDamageTarget(p.ownerId, p.isHomingMissile ? p.targetId : undefined, enemy.id)) continue;
 
           const combinedRadius = enemy.collisionRadius + p.hitRadius;
           if (
@@ -596,7 +793,39 @@ export class CombatManager {
         }
       } else if (p.faction === 'enemy' && playerAlive) {
         // Enemy projectile -> check player ship (never damages own shooter)
-        if (p.ownerId === PLAYER_ENTITY_ID) continue;
+        if (!canMissileDamageTarget(p.ownerId, p.isHomingMissile ? p.targetId : undefined, PLAYER_ENTITY_ID)) continue;
+
+        const transport = this.transport;
+        if (
+          transport?.active &&
+          !transport.health.isDestroyed &&
+          p.ownerId !== TRANSPORT_ENTITY_ID &&
+          intersectSegmentSphere(
+            p.prevPosition,
+            p.position,
+            transport.position,
+            transport.collisionRadius + p.hitRadius,
+            _hitPoint,
+          )
+        ) {
+          this.projectiles.release(p);
+          const dmgRes = applyDamage(transport.health, p.damage, p.ownerId, this.simTime);
+          if (dmgRes.applied) {
+            transport.hitFlashTimer = 0.45;
+            this.callbacks.onDamage?.({
+              targetId: TRANSPORT_ENTITY_ID, attackerId: p.ownerId, weaponId: p.weaponId,
+              amount: dmgRes.appliedAmount, remainingHealth: dmgRes.remaining,
+              maxHealth: transport.health.max, destroyed: dmgRes.destroyedNow,
+              hitPoint: _hitPoint, timestamp: this.simTime,
+            });
+            this.callbacks.onVfxBurst?.({ kind: 'impact', position: _hitPoint, color: '#fbbf24', scale: 1.1 });
+            if (dmgRes.destroyedNow) {
+              transport.active = false;
+              this.callbacks.onVfxBurst?.({ kind: 'explosion', position: transport.position, color: '#f97316', scale: 2.8 });
+            }
+          }
+          continue;
+        }
 
         const combinedRadius = PLAYER_COLLISION_RADIUS + p.hitRadius;
         if (

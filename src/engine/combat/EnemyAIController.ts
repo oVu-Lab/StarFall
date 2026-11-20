@@ -86,9 +86,9 @@ export class EnemyAIController {
     enemy: EnemyEntity,
     dt: number,
     now: number,
-    playerPos: THREE.Vector3,
-    playerVel: THREE.Vector3,
-    playerAlive: boolean,
+    targetPos: THREE.Vector3,
+    targetVel: THREE.Vector3,
+    targetAlive: boolean,
     projectiles: ProjectilePool,
     allEnemies: EnemyEntity[],
   ): EnemyAIUpdateResult {
@@ -117,7 +117,7 @@ export class EnemyAIController {
     );
     const weapon = WEAPON_CONFIGS[personality.weaponId] ?? WEAPON_CONFIGS.enemy_pulse_aggressor;
 
-    _toPlayer.subVectors(playerPos, enemy.position);
+    _toPlayer.subVectors(targetPos, enemy.position);
     const distToPlayer = _toPlayer.length();
     const dirToPlayer = distToPlayer > 0.001 ? _toPlayer.divideScalar(distToPlayer) : _forward.set(0, 0, -1);
 
@@ -133,7 +133,7 @@ export class EnemyAIController {
     }
 
     // 1. State Machine Transitions
-    if (!playerAlive) {
+    if (!targetAlive) {
       enemy.aiState = 'patrol';
     } else {
       switch (enemy.aiState) {
@@ -153,7 +153,7 @@ export class EnemyAIController {
         }
         case 'pursue': {
           if (distToPlayer <= personality.minSafeDistance) {
-            this.beginReposition(enemy, playerPos, personality.preferredRange);
+            this.beginReposition(enemy, targetPos, personality.preferredRange);
           } else if (distToPlayer <= personality.engageRange) {
             enemy.aiState = 'engage';
             enemy.aiStateTimer = 3.2;
@@ -162,7 +162,7 @@ export class EnemyAIController {
         }
         case 'engage': {
           if (distToPlayer <= personality.minSafeDistance) {
-            this.beginReposition(enemy, playerPos, personality.preferredRange);
+            this.beginReposition(enemy, targetPos, personality.preferredRange);
           } else if (distToPlayer > personality.engageRange * 1.25) {
             enemy.aiState = 'pursue';
             enemy.aiStateTimer = 2.5;
@@ -226,7 +226,7 @@ export class EnemyAIController {
     } else if (enemy.aiState === 'engage') {
       // Lead target slightly while orbiting/closing according to personality
       const timeToHit = THREE.MathUtils.clamp(distToPlayer / Math.max(weapon.projectileSpeed, 1), 0, 1.4);
-      _leadPoint.copy(playerPos).addScaledVector(playerVel, timeToHit * 0.72);
+      _leadPoint.copy(targetPos).addScaledVector(targetVel, timeToHit * 0.72);
       _desiredDir.subVectors(_leadPoint, enemy.position).normalize();
 
       if (personality.id === 'defender' && distToPlayer < personality.preferredRange) {
@@ -302,11 +302,11 @@ export class EnemyAIController {
 
     // 6. Tactical Burst Weapon Firing (only when aligned & inside engage envelope)
     if (
-      playerAlive &&
+      targetAlive &&
       (enemy.aiState === 'engage' || (enemy.aiState === 'pursue' && distToPlayer < personality.engageRange * 1.05))
     ) {
       const timeToTarget = THREE.MathUtils.clamp(distToPlayer / Math.max(weapon.projectileSpeed, 1), 0, 1.3);
-      _leadPoint.copy(playerPos).addScaledVector(playerVel, timeToTarget * 0.78);
+      _leadPoint.copy(targetPos).addScaledVector(targetVel, timeToTarget * 0.78);
       _fireDir.subVectors(_leadPoint, enemy.position).normalize();
 
       const alignment = _forward.dot(_fireDir);

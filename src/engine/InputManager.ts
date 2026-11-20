@@ -16,6 +16,7 @@ export interface InputSnapshot {
   rollRight: boolean;
   boost: boolean;
   firePrimary: boolean;
+  missilePressed?: boolean;
   keyPitchUp: boolean;
   keyPitchDown: boolean;
   keyYawLeft: boolean;
@@ -93,6 +94,7 @@ export class InputManager {
   private stickY = 0;
   private pointerLocked = false;
   private mouseFireHeld = false;
+  private missileLaunchQueued = false;
   private lockTarget: HTMLElement | null = null;
   private active = false;
   private attached = false;
@@ -110,6 +112,7 @@ export class InputManager {
     rollRight: false,
     boost: false,
     firePrimary: false,
+    missilePressed: false,
     keyPitchUp: false,
     keyPitchDown: false,
     keyYawLeft: false,
@@ -170,6 +173,7 @@ export class InputManager {
     if (!isActive) {
       this.keys.clear();
       this.mouseFireHeld = false;
+      this.missileLaunchQueued = false;
       this.resetVirtualStick();
     }
   }
@@ -365,6 +369,8 @@ export class InputManager {
     this.snapshot.rollRight = this.keys.has('KeyD');
     this.snapshot.boost = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
     this.snapshot.firePrimary = this.mouseFireHeld || this.keys.has('Space');
+    this.snapshot.missilePressed = this.missileLaunchQueued;
+    this.missileLaunchQueued = false;
     this.snapshot.keyPitchUp = keyPitchUp;
     this.snapshot.keyPitchDown = keyPitchDown;
     this.snapshot.keyYawLeft = keyYawLeft;
@@ -415,6 +421,12 @@ export class InputManager {
 
     if (!this.active) return;
 
+    if (e.code === 'KeyM') {
+      if (!e.repeat) this.missileLaunchQueued = true;
+      e.preventDefault();
+      return;
+    }
+
     if (
       e.code === 'KeyW' ||
       e.code === 'KeyS' ||
@@ -423,12 +435,13 @@ export class InputManager {
       e.code === 'ShiftLeft' ||
       e.code === 'ShiftRight' ||
       e.code === 'Space' ||
+      e.code === 'KeyM' ||
       e.code === 'ArrowUp' ||
       e.code === 'ArrowDown' ||
       e.code === 'ArrowLeft' ||
       e.code === 'ArrowRight'
     ) {
-      if (e.code === 'Space') e.preventDefault();
+      if (e.code === 'Space' || e.code === 'KeyM') e.preventDefault();
       this.keys.add(e.code);
     }
   };
@@ -478,6 +491,7 @@ export class InputManager {
   private handleBlur = (): void => {
     this.keys.clear();
     this.mouseFireHeld = false;
+    this.missileLaunchQueued = false;
     this.resetVirtualStick();
   };
 

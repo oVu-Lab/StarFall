@@ -135,6 +135,8 @@ export function createInitialTelemetry(ship: ShipConfig): FlightTelemetry {
     alignmentErrorPx: 0,
     aimBoundaryWidthPx: initWidthPx,
     aimBoundaryHeightPx: initHeightPx,
+    viewportWidthPx: 1280,
+    viewportHeightPx: 720,
     aimBoundaryCornerRadiusPx: initCornerPx,
     joystickRadialMagnitude: 0,
     steeringOutputX: 0,
@@ -168,6 +170,10 @@ export function createInitialTelemetry(ship: ShipConfig): FlightTelemetry {
       activeEnemies: 0,
     },
     enemyMarkers: createEmptyEnemyMarkers(6),
+    missileHud: {
+      lockProgress: 0, lockTargetName: '', lockReady: false, lockEscaped: false,
+      missilesRemaining: 4, incomingMissile: false, incomingX: 0.5, incomingY: 0.5,
+    },
     fps: 60,
     frameTimeMs: 16.6,
     drawCalls: 0,
@@ -543,6 +549,8 @@ export class FlightController {
     telemetry.alignmentErrorPx = this.steeringError.magnitude;
     telemetry.aimBoundaryWidthPx = this.aimBoundary.widthPx;
     telemetry.aimBoundaryHeightPx = this.aimBoundary.heightPx;
+    telemetry.viewportWidthPx = vw;
+    telemetry.viewportHeightPx = vh;
     telemetry.aimBoundaryCornerRadiusPx = this.aimBoundary.cornerRadiusPx;
   }
 
@@ -1142,6 +1150,8 @@ export class FlightController {
     telemetry.alignmentErrorPx = this.steeringMode === 'mouse-alignment' ? this.steeringError.magnitude : 0;
     telemetry.aimBoundaryWidthPx = this.aimBoundary.widthPx;
     telemetry.aimBoundaryHeightPx = this.aimBoundary.heightPx;
+    telemetry.viewportWidthPx = vw;
+    telemetry.viewportHeightPx = vh;
     telemetry.aimBoundaryCornerRadiusPx = this.aimBoundary.cornerRadiusPx;
     telemetry.joystickRadialMagnitude = this.joystickEval.radialMagnitude;
     telemetry.steeringOutputX = this.joystickEval.steerX;

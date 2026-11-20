@@ -7,6 +7,12 @@
 This contains everything you need to run your app locally.
 https://ai.studio/apps/49f9382e-a5a8-4ac9-ad38-8127f285cebb
 
+## Escort mission slice
+
+The campaign includes Mission 06, **Last Shuttle Out**, unlocked after Mission 05. Protect friendly transport CIVILIAN-07 while it follows its extraction route. Aggressor and defender enemies select the transport as their target; flankers continue engaging the player. The transport uses the shared health and projectile collision systems, is shown with a friendly world marker and a hull/progress HUD, and contributes its remaining hull to mission survival scoring.
+
+Escort objectives use `escort_transport` in `src/types/mission.ts` and an optional `escort` route on mission definitions. The transport lifecycle is owned by `CombatManager` and evaluated by `MissionManager`. Focused coverage lives in `tests/escort-mission.test.ts`.
+
 ## Run Locally
 
 **Prerequisites:**  Node.js

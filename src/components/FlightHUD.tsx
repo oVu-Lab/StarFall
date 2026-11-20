@@ -79,6 +79,13 @@ export function FlightHUD({
   const combatHostilesRef = useRef<HTMLSpanElement>(null);
   const combatKillsRef = useRef<HTMLSpanElement>(null);
   const combatAccRef = useRef<HTMLSpanElement>(null);
+  const lockPanelRef = useRef<HTMLDivElement>(null);
+  const lockNameRef = useRef<HTMLSpanElement>(null);
+  const lockStateRef = useRef<HTMLDivElement>(null);
+  const lockBarRef = useRef<HTMLDivElement>(null);
+  const missileAmmoRef = useRef<HTMLSpanElement>(null);
+  const missileWarningRef = useRef<HTMLDivElement>(null);
+  const missileDirectionRef = useRef<HTMLDivElement>(null);
 
   // Primary target summary card refs
   const targetCardRef = useRef<HTMLDivElement>(null);
@@ -187,6 +194,23 @@ export function FlightHUD({
       if (weaponStatusRef.current) {
         weaponStatusRef.current.textContent = t.isFiring ? 'FIRING' : 'READY';
         weaponStatusRef.current.style.color = t.isFiring ? '#67e8f9' : '#94a3b8';
+      }
+      const mh = t.missileHud;
+      if (lockPanelRef.current) lockPanelRef.current.style.opacity = mh.lockTargetName ? '1' : mh.lockEscaped ? '1' : '0.55';
+      if (lockNameRef.current) lockNameRef.current.textContent = mh.lockTargetName || (mh.lockEscaped ? 'TARGET ESCAPED' : 'NO TARGET');
+      if (lockStateRef.current) {
+        lockStateRef.current.textContent = mh.lockReady ? 'LOCK READY · PRESS M' : mh.lockEscaped ? 'LOCK LOST' : mh.lockTargetName ? 'ACQUIRING' : 'SEEKING TARGET';
+        lockStateRef.current.style.color = mh.lockReady ? '#86efac' : mh.lockEscaped ? '#fb7185' : '#67e8f9';
+      }
+      if (lockBarRef.current) {
+        lockBarRef.current.style.transform = `scaleX(${mh.lockProgress.toFixed(3)})`;
+        lockBarRef.current.style.backgroundColor = mh.lockReady ? '#4ade80' : '#22d3ee';
+      }
+      if (missileAmmoRef.current) missileAmmoRef.current.textContent = `${mh.missilesRemaining} · M`;
+      if (missileWarningRef.current) missileWarningRef.current.style.opacity = mh.incomingMissile ? '1' : '0';
+      if (missileDirectionRef.current) {
+        missileDirectionRef.current.style.opacity = mh.incomingMissile ? '1' : '0';
+        missileDirectionRef.current.style.transform = `translate3d(${(mh.incomingX * vw).toFixed(1)}px, ${(mh.incomingY * vh).toFixed(1)}px, 0) translate(-50%, -50%)`;
       }
 
       // 3. Boost Energy
@@ -517,6 +541,14 @@ export function FlightHUD({
         aria-hidden="true"
       />
 
+      <div ref={missileWarningRef} className="pointer-events-none fixed right-72 top-20 border border-rose-400/70 bg-[#260811]/90 px-3 py-2 font-mono text-xs font-bold tracking-[0.18em] text-rose-200 shadow-[0_0_18px_rgba(244,63,94,0.35)]" style={{ opacity: 0, transition: 'opacity 100ms' }}>MISSILE WARNING</div>
+      <div ref={missileDirectionRef} className="pointer-events-none fixed left-0 top-0 text-rose-400" style={{ opacity: 0, willChange: 'transform,opacity' }} aria-label="Incoming missile direction"><svg width="30" height="30" viewBox="0 0 30 30"><path d="M15 2 L27 26 L15 21 L3 26 Z" fill="rgba(244,63,94,.18)" stroke="currentColor" strokeWidth="1.7"/></svg></div>
+      <div ref={lockPanelRef} className="pointer-events-none fixed bottom-6 left-1/2 w-60 -translate-x-1/2 border border-cyan-400/35 bg-[#040a18]/88 px-3 py-2 font-mono text-[10px] tracking-wider" style={{ opacity: 0.55 }}>
+        <div className="flex justify-between"><span ref={lockNameRef} className="text-slate-200">NO TARGET</span><span ref={missileAmmoRef} className="text-orange-200">4 · M</span></div>
+        <div className="mt-1.5 h-1 overflow-hidden bg-slate-800"><div ref={lockBarRef} className="h-full w-full origin-left bg-cyan-400" style={{ transform: 'scaleX(0)' }} /></div>
+        <div ref={lockStateRef} className="mt-1 text-center text-cyan-300">SEEKING TARGET</div>
+      </div>
+
       {/* Pooled 3D Enemy Target Brackets & Health Bars */}
       {MARKER_INDICES.map((idx) => (
         <div
@@ -784,6 +816,8 @@ export function FlightHUD({
                   const progressLabel =
                     obj.type === 'survive_duration'
                       ? `${Math.floor(obj.elapsedSec)}s / ${obj.targetDurationSec}s`
+                      : obj.type === 'escort_transport'
+                        ? (missionHud.transport?.progress ?? 0) >= 1 ? 'EXTRACTED' : `${Math.round((missionHud.transport?.progress ?? 0) * 100)}%`
                       : obj.type === 'defeat_target'
                         ? done
                           ? 'DONE'
@@ -812,6 +846,20 @@ export function FlightHUD({
                   );
                 })}
               </ul>
+              {missionHud.transport && (
+                <div className="mt-2 border-t border-slate-800/90 pt-2">
+                  <div className="flex justify-between font-mono text-[10px] text-amber-200">
+                    <span>ESCORT · {missionHud.transport.callsign}</span>
+                    <span>{Math.ceil(missionHud.transport.currentHull)} / {missionHud.transport.maxHull} HULL</span>
+                  </div>
+                  <div className="mt-1 h-1 bg-slate-800">
+                    <div className="h-full bg-amber-400 transition-[width]" style={{ width: `${Math.max(0, missionHud.transport.currentHull / missionHud.transport.maxHull * 100)}%` }} />
+                  </div>
+                  <div className="mt-1 text-right font-mono text-[9px] tracking-wider text-amber-300/80">
+                    {(missionHud.transport.progress * 100).toFixed(0)}% TO EXTRACTION
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

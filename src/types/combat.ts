@@ -65,6 +65,11 @@ export interface ProjectileState {
   boltLength: number;
   boltRadius: number;
   isPlayerOwned: boolean;
+  isHomingMissile?: boolean;
+  targetId?: EntityId;
+  launcherForward?: THREE.Vector3;
+  evasionProgress?: number;
+  targetLost?: boolean;
 }
 
 export interface BotPersonalityConfig {
@@ -133,6 +138,23 @@ export interface EnemyEntity {
   repositionPoint: THREE.Vector3;
   hitFlashTimer: number;
   muzzleFlashTimer: number;
+  targetTransport: boolean;
+  missileLockTimer?: number;
+  missileCooldown?: number;
+}
+
+export interface TransportEntity {
+  callsign: string;
+  active: boolean;
+  position: THREE.Vector3;
+  quaternion: THREE.Quaternion;
+  velocity: THREE.Vector3;
+  health: HealthState;
+  collisionRadius: number;
+  route: THREE.Vector3[];
+  routeIndex: number;
+  progress: number;
+  hitFlashTimer: number;
 }
 
 /**
@@ -203,4 +225,15 @@ export interface ProjectedEnemyMarker {
   leadX: number;
   leadY: number;
   leadVisible: boolean;
+}
+
+export interface MissileHudState {
+  lockProgress: number;
+  lockTargetName: string;
+  lockReady: boolean;
+  lockEscaped: boolean;
+  missilesRemaining: number;
+  incomingMissile: boolean;
+  incomingX: number;
+  incomingY: number;
 }

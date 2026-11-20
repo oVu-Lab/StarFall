@@ -33,6 +33,11 @@ export class ProjectilePool {
         boltLength: 4,
         boltRadius: 0.14,
         isPlayerOwned: false,
+        isHomingMissile: false,
+        targetId: undefined,
+        launcherForward: new THREE.Vector3(0, 0, -1),
+        evasionProgress: 0,
+        targetLost: false,
       };
     }
   }
@@ -104,6 +109,10 @@ export class ProjectilePool {
     slot.boltLength = weapon.boltLength;
     slot.boltRadius = weapon.boltRadius;
     slot.isPlayerOwned = faction === 'player';
+    slot.isHomingMissile = false;
+    slot.targetId = undefined;
+    slot.evasionProgress = 0;
+    slot.targetLost = false;
 
     return slot;
   }

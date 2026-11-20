@@ -58,6 +58,8 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
     const playerBoltsRef = useRef<THREE.InstancedMesh>(null);
     const enemyBoltsRef = useRef<THREE.InstancedMesh>(null);
     const sparksRef = useRef<THREE.InstancedMesh>(null);
+    const missilesRef = useRef<THREE.InstancedMesh>(null);
+    const missileTrailsRef = useRef<THREE.InstancedMesh>(null);
     const shockwaveGroupRef = useRef<THREE.Group>(null);
 
     const glowSpriteTex = useMemo(() => AssetManager.acquireGlowSprite(), []);
@@ -69,6 +71,10 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
     }, [glowSpriteTex]);
 
     const boltGeo = useMemo(() => new THREE.CylinderGeometry(0.14, 0.14, 1, 6, 1), []);
+    const missileGeo = useMemo(() => new THREE.ConeGeometry(0.42, 2.2, 7), []);
+    const missileTrailGeo = useMemo(() => new THREE.CylinderGeometry(0.04, 0.32, 2.6, 6), []);
+    const missileMat = useMemo(() => new THREE.MeshBasicMaterial({ color: '#fb923c', toneMapped: false }), []);
+    const missileTrailMat = useMemo(() => new THREE.MeshBasicMaterial({ color: '#f97316', transparent: true, opacity: 0.72, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }), []);
     const playerBoltMat = useMemo(
       () =>
         new THREE.MeshBasicMaterial({
@@ -193,6 +199,10 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
     useEffect(() => {
       return () => {
         boltGeo.dispose();
+        missileGeo.dispose();
+        missileTrailGeo.dispose();
+        missileMat.dispose();
+        missileTrailMat.dispose();
         playerBoltMat.dispose();
         enemyBoltMat.dispose();
         sparkGeo.dispose();
@@ -207,6 +217,10 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
       };
     }, [
       boltGeo,
+      missileGeo,
+      missileTrailGeo,
+      missileMat,
+      missileTrailMat,
       enemyBoltMat,
       playerBoltMat,
       shockMeshes,
@@ -291,7 +305,9 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
       const pMesh = playerBoltsRef.current;
       const eMesh = enemyBoltsRef.current;
       const sMesh = sparksRef.current;
-      if (!pMesh || !eMesh || !sMesh) return;
+      const mMesh = missilesRef.current;
+      const mtMesh = missileTrailsRef.current;
+      if (!pMesh || !eMesh || !sMesh || !mMesh || !mtMesh) return;
 
       const gfx = graphicsRef.current;
 
@@ -304,6 +320,8 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
           _dummy.updateMatrix();
           pMesh.setMatrixAt(i, _dummy.matrix);
           eMesh.setMatrixAt(i, _dummy.matrix);
+          mMesh.setMatrixAt(i, _dummy.matrix);
+          mtMesh.setMatrixAt(i, _dummy.matrix);
           continue;
         }
 
@@ -311,7 +329,21 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
         _dummy.position.copy(proj.position);
         _dummy.quaternion.copy(_quat);
 
-        if (proj.isPlayerOwned) {
+        if (proj.isHomingMissile) {
+          _dummy.position.copy(proj.position);
+          _dummy.quaternion.copy(_quat);
+          _dummy.scale.set(1.15, 1.15, 1.15);
+          _dummy.updateMatrix();
+          mMesh.setMatrixAt(i, _dummy.matrix);
+          _dummy.position.copy(proj.position).addScaledVector(proj.direction, -1.65);
+          _dummy.scale.set(0.9, Math.max(0.35, 0.8 + Math.sin(proj.age * 38) * 0.12), 0.9);
+          _dummy.updateMatrix();
+          mtMesh.setMatrixAt(i, _dummy.matrix);
+          _dummy.scale.copy(_hiddenScale); _dummy.updateMatrix();
+          pMesh.setMatrixAt(i, _dummy.matrix); eMesh.setMatrixAt(i, _dummy.matrix);
+        } else if (proj.isPlayerOwned) {
+          _dummy.scale.copy(_hiddenScale); _dummy.updateMatrix();
+          mMesh.setMatrixAt(i, _dummy.matrix); mtMesh.setMatrixAt(i, _dummy.matrix);
           _dummy.scale.set(proj.boltRadius * 7.5, proj.boltLength, proj.boltRadius * 7.5);
           _dummy.updateMatrix();
           pMesh.setMatrixAt(i, _dummy.matrix);
@@ -320,6 +352,8 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
           _dummy.updateMatrix();
           eMesh.setMatrixAt(i, _dummy.matrix);
         } else {
+          _dummy.scale.copy(_hiddenScale); _dummy.updateMatrix();
+          mMesh.setMatrixAt(i, _dummy.matrix); mtMesh.setMatrixAt(i, _dummy.matrix);
           _dummy.scale.set(proj.boltRadius * 8.2, proj.boltLength, proj.boltRadius * 8.2);
           _dummy.updateMatrix();
           eMesh.setMatrixAt(i, _dummy.matrix);
@@ -331,6 +365,8 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
       }
       pMesh.instanceMatrix.needsUpdate = true;
       eMesh.instanceMatrix.needsUpdate = true;
+      mMesh.instanceMatrix.needsUpdate = true;
+      mtMesh.instanceMatrix.needsUpdate = true;
 
       // 2. Update Pooled Impact & Explosion Sparks
       let activeSparkCount = 0;
@@ -422,6 +458,8 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
           frustumCulled={false}
           renderOrder={14}
         />
+        <instancedMesh ref={missilesRef} args={[missileGeo, missileMat, MAX_POOLED_PROJECTILES]} frustumCulled={false} renderOrder={15} />
+        <instancedMesh ref={missileTrailsRef} args={[missileTrailGeo, missileTrailMat, MAX_POOLED_PROJECTILES]} frustumCulled={false} renderOrder={14} />
         <instancedMesh
           ref={enemyBoltsRef}
           args={[boltGeo, enemyBoltMat, MAX_POOLED_PROJECTILES]}

@@ -27,7 +27,8 @@ export type ObjectiveType =
   | 'eliminate_all'
   | 'survive_duration'
   | 'defeat_target'
-  | 'survive_waves';
+  | 'survive_waves'
+  | 'escort_transport';
 
 export type ObjectiveStatus = 'active' | 'completed' | 'failed';
 
@@ -106,6 +107,11 @@ export interface MissionDefinition {
   unlockRequirementId: string | null;
   rewardLabel: string;
   totalEnemyCount: number;
+  escort?: {
+    callsign: string;
+    maxHull: number;
+    route: Array<[number, number, number]>;
+  };
 }
 
 export interface MissionScoreBreakdown {
@@ -133,6 +139,7 @@ export interface MissionResult {
   timeTakenSec: number;
   damageReceived: number;
   remainingHullPct: number;
+  transportRemainingHullPct?: number | null;
   unlockedNextMissionId: string | null;
   unlockedNextMissionName: string | null;
   isNewBestRank: boolean;
@@ -163,4 +170,5 @@ export interface MissionHudSnapshot {
   objectives: ObjectiveRuntimeState[];
   announcement: string | null;
   announcementKind: 'info' | 'complete' | 'warning';
+  transport: { callsign: string; currentHull: number; maxHull: number; progress: number } | null;
 }

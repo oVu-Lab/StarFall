@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "node --import tsx --test MouseAlignment.test.ts tests/pointer-lock.test.ts && node --import tsx tests/alignment.test.ts"
+    "test": "node --import tsx --test MouseAlignment.test.ts tests/pointer-lock.test.ts tests/escort-mission.test.ts tests/missiles.test.ts && node --import tsx tests/alignment.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

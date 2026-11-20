@@ -1,5 +1,5 @@
 import type * as THREE from 'three';
-import type { CombatStats, ProjectedEnemyMarker } from './combat';
+import type { CombatStats, MissileHudState, ProjectedEnemyMarker } from './combat';
 
 export type GamePhase = 'menu' | 'loading' | 'playing' | 'paused' | 'results';
 
@@ -165,6 +165,8 @@ export interface FlightTelemetry {
   /** Live rounded-rectangle boundary geometry in game viewport CSS pixels */
   aimBoundaryWidthPx: number;
   aimBoundaryHeightPx: number;
+  viewportWidthPx: number;
+  viewportHeightPx: number;
   aimBoundaryCornerRadiusPx: number;
   /** Normalized radial virtual joystick displacement r in [0..1] along its ray to the boundary */
   joystickRadialMagnitude: number;
@@ -194,6 +196,7 @@ export interface FlightTelemetry {
   playerDestroyed: boolean;
   combatStats: CombatStats;
   enemyMarkers: ProjectedEnemyMarker[];
+  missileHud: MissileHudState;
   // Performance metrics (read by dev-only performance monitor)
   fps: number;
   frameTimeMs: number;
