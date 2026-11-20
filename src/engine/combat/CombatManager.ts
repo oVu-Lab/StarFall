@@ -449,8 +449,23 @@ export class CombatManager {
     _muzzleLocal.set(offset[0], offset[1], offset[2]).applyQuaternion(flight.quaternion);
     _muzzleWorld.copy(flight.position).add(_muzzleLocal);
 
-    // Compute exact 3D convergence target along the player's true aiming ray
-    // If a primary target is near the reticle, converge at that target's distance so bolts cross dead-on!
+    // The visible reticle projects the fixed convergence point in alignment mode. Preserve
+    // inherited forward speed but prevent spread or lateral drift from missing that point.
+    if (flight.steeringMode === 'mouse-alignment') {
+      flight.getAimTargetPoint(_aimTarget, weapon.convergenceDistance);
+      _fireDir.subVectors(_aimTarget, _muzzleWorld).normalize();
+      this.projectiles.spawn(
+        PLAYER_ENTITY_ID, 'player', weapon, _muzzleWorld, _fireDir, flight.velocity, _aimTarget,
+      );
+      this.stats.shotsFired += 1;
+      this.callbacks.onPlayerFire?.({
+        shooterId: PLAYER_ENTITY_ID, faction: 'player', weaponId: weapon.id,
+        origin: _muzzleWorld, direction: _fireDir, timestamp: this.simTime,
+      });
+      return;
+    }
+
+    // Legacy modes retain distance-dependent convergence and spread.
     let convergeDist = weapon.convergenceDistance;
     if (this.primaryTargetId) {
       const target = this.enemies.find(

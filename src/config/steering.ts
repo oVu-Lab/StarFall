@@ -16,36 +16,26 @@ export type SteeringMode = 'mouse-alignment' | 'direct-nonlinear' | 'virtual-joy
 /**
  * Mouse-to-Reticle Alignment steering model (active default).
  *
- *   V  virtualMousePosition: accumulated movementX/Y (CSS px from viewport center). Never
- *      clamped, reset, or modified by camera movement.
- *   R  aim reticle: the active cannon ray projected through the active chase camera. It is a
- *      real 3D direction, not a visual interpolation proxy, and is constrained by the aim region.
- *   e  steeringError = clampToAimRegion(V) - R in the same CSS-pixel screen plane. V itself is
- *      kept unbounded; its boundary projection supplies a reachable directional target.
- *   The ray is mounted in ship local space, so genuine ship rotation changes R; FlightController
- *   then reprojects it through the camera after its chase interpolation has completed.
- *   d(m) = m^2 / (m + deadzonePx)  smooth soft deadzone (C-inf, no cutoff)
- *   n = d(|e|) / (alignmentReferenceFraction * viewportHeight)
- *   s(n) = tanh(n * (alignmentLinearGain + alignmentQuadGain * n))
- *   target rate = maxRate * s(n) * e/|e|
+ *   V is a target offset in viewport CSS pixels: relative Pointer Lock deltas add to it, then
+ *   the actual ship rotation moves it by the opposite camera-projected weapon-ray displacement.
+ *   R is the ship-forward weapon convergence point projected through the active camera.
+ *   e = V - R is closed by the measured ship-rotation projection feedback, including when R is
+ *   held at the boundary by camera correction. Demand settles only as the real projected ray
+ *   catches V; there is no independent HUD interpolation or weapon gimbal.
  */
 export const MOUSE_ALIGNMENT_CONFIG = {
-  /** Fraction of physical Pointer Lock motion immediately applied to the cannon reticle. */
-  reticleInputGain: 0.12,
-  /** Fraction of each real airframe yaw/pitch step transferred into the physical cannon gimbal. */
-  gimbalRotationGain: 0.06,
-  /** Distance used for camera-to-weapon screen-ray conversion; matches player cannon convergence. */
-  projectionDistance: 240,
-  /** Overshoot distance (fraction of viewport height) that maps to n = 1 */
-  alignmentReferenceFraction: 0.26,
+  /** Fraction of each real hull rotation followed by the camera (must remain below 1). */
+  cameraRotationFollow: 0.55,
+  /** Error normalization denominator: n = |V - T| / (alignmentReferenceFraction * viewportHeight). */
+  alignmentReferenceFraction: 0.3,
   /** Soft error deadzone (px): errors well below this produce almost no steering, smoothly */
   alignmentErrorDeadzonePx: 0.5,
-  /** s'(0): slope of the demand curve at the boundary (precise, continuous onset) */
+  /** Low-error gain: tunes precise in-bound tracking separately from maximum ship turn rates. */
   alignmentLinearGain: 1.0,
   /** Extra quadratic growth of demand with distance (progressive strength) */
-  alignmentQuadGain: 0.9,
-  /** First-order rate smoothing time constant (s) */
-  alignmentRateTauSec: 0.045,
+  alignmentQuadGain: 1.6,
+  /** First-order rate smoothing time constant (s); near-immediate large flick response */
+  alignmentRateTauSec: 0.004,
 } as const;
 
 /**
@@ -116,11 +106,11 @@ export const DIRECT_MOUSE_STEERING_CONFIG = {
   /** C2-continuous soft saturation knee before reaching 1.0 ceiling (zero abrupt transitions) */
   softSaturationKnee: 0.85,
 
-  /** Independent maximum yaw angular rate for reference Interceptor hull (rad/s, ~149 deg/s) */
-  maxYawRate: 2.6,
+  /** Independent maximum yaw angular rate for reference Interceptor hull (rad/s, ~315 deg/s) */
+  maxYawRate: 5.5,
 
-  /** Independent maximum pitch angular rate for reference Interceptor hull (rad/s, ~129 deg/s) */
-  maxPitchRate: 2.25,
+  /** Independent maximum pitch angular rate for reference Interceptor hull (rad/s, ~286 deg/s before pitch balance) */
+  maxPitchRate: 5.0,
 
   /** Independent horizontal yaw sensitivity balance */
   yawRate: 1.0,

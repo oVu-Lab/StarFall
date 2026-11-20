@@ -154,13 +154,13 @@ export interface FlightTelemetry {
   /** Normalized virtual joystick deflection (-1..1 inside rounded-rectangle boundary) */
   aimNormalizedX: number;
   aimNormalizedY: number;
-  /** Screen-space [0..1] position of the boundary-constrained AIM RETICLE */
+  /** Camera projection of the actual weapon convergence point, inside the aim boundary. */
   aimScreenX: number;
   aimScreenY: number;
   /** Screen-space [0..1] position of the unconstrained VIRTUAL MOUSE (may lie outside [0..1]) */
   virtualMouseScreenX: number;
   virtualMouseScreenY: number;
-  /** Reachable reticle alignment error in viewport CSS px (virtual mouse direction vs projected cannon ray) */
+  /** Full V - T alignment error in viewport CSS pixels. */
   alignmentErrorPx: number;
   /** Live rounded-rectangle boundary geometry in game viewport CSS pixels */
   aimBoundaryWidthPx: number;

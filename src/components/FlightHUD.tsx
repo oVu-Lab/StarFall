@@ -210,8 +210,7 @@ export function FlightHUD({
             : 'Boost Energy';
       }
 
-      // 4. Actual cannon aim reticle: a camera-projected weapon ray bounded by the central
-      //    aim region. `virtualMouse*` remains a separate, unbounded Pointer Lock accumulator.
+      // 4. Actual cannon aim point projected through the camera, independent of V and the boundary.
       const aimPxX = t.aimScreenX * vw;
       const aimPxY = t.aimScreenY * vh;
       const cx = vw * 0.5;
@@ -323,9 +322,11 @@ export function FlightHUD({
       const vmRawX = t.virtualMouseScreenX * vw;
       const vmRawY = t.virtualMouseScreenY * vh;
       const edge = 14;
-      const vmPxX = Math.min(vw - edge, Math.max(edge, vmRawX));
-      const vmPxY = Math.min(vh - edge, Math.max(edge, vmRawY));
-      const vmOffscreen = vmPxX !== vmRawX || vmPxY !== vmRawY;
+      const vx = vmRawX - cx, vy = vmRawY - cy;
+      const edgeScale = Math.min(1, (cx - edge) / Math.max(Math.abs(vx), 1e-9), (cy - edge) / Math.max(Math.abs(vy), 1e-9));
+      const vmPxX = cx + vx * edgeScale;
+      const vmPxY = cy + vy * edgeScale;
+      const vmOffscreen = edgeScale < 1;
       if (virtualMouseRef.current) {
         virtualMouseRef.current.style.transform = `translate3d(${vmPxX.toFixed(1)}px, ${vmPxY.toFixed(1)}px, 0) translate(-50%, -50%)`;
         virtualMouseRef.current.dataset.screenX = t.virtualMouseScreenX.toFixed(4);
@@ -635,7 +636,7 @@ export function FlightHUD({
         </svg>
       </div>
 
-      {/* Aim Reticle: current aiming direction, constrained to the aim boundary */}
+      {/* Aim Reticle: bounded camera projection of the real weapon convergence point */}
       <div
         ref={aimReticleRef}
         data-testid="aim-reticle"

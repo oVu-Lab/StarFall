@@ -55,6 +55,7 @@ export class ProjectilePool {
     origin: THREE.Vector3,
     direction: THREE.Vector3,
     inheritedVelocity?: THREE.Vector3,
+    convergencePoint?: THREE.Vector3,
   ): ProjectileState {
     const len = this.items.length;
     let slot: ProjectileState | null = null;
@@ -88,6 +89,13 @@ export class ProjectilePool {
     if (inheritedVelocity) {
       // Partial velocity inheritance prevents projectiles lagging behind high-speed boosting ships
       slot.velocity.addScaledVector(inheritedVelocity, 0.3);
+    }
+    if (convergencePoint) {
+      // Preserve the inherited forward-speed contribution while preventing lateral drift off
+      // the camera-projected convergence point. No extra vector allocation is required.
+      slot.direction.subVectors(convergencePoint, origin).normalize();
+      const speed = Math.max(1, slot.velocity.dot(slot.direction));
+      slot.velocity.copy(slot.direction).multiplyScalar(speed);
     }
     slot.damage = weapon.damage;
     slot.age = 0;

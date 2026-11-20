@@ -352,7 +352,6 @@ export default function App() {
 
   const handleResume = useCallback(() => {
     AudioManager.unlock();
-    flightRef.current.centerAimCursor();
     inputRef.current.resetVirtualStick();
     setPhase('playing');
     inputRef.current.setActive(true);

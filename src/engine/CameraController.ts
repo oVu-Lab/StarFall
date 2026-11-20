@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import { STEERING_CONFIG } from '../config/steering';
+import { WEAPON_CONFIGS } from '../config/weapons';
+import { clampToRoundedRect, computeRoundedRectBoundary, createRoundedRectBoundary, createRoundedRectClampResult } from './AimBoundary';
 import type { GameSettings } from '../types/game';
 import type { FlightController } from './FlightController';
 
@@ -12,6 +15,19 @@ const _right = new THREE.Vector3();
 const _lookMatrix = new THREE.Matrix4();
 const _desiredQuat = new THREE.Quaternion();
 const _shakeVec = new THREE.Vector3();
+const _shipLocalDelta = new THREE.Quaternion();
+const _rollDelta = new THREE.Quaternion();
+const _shipInverse = new THREE.Quaternion();
+const _swingDelta = new THREE.Quaternion();
+const _partialDelta = new THREE.Quaternion();
+const _identityQuat = new THREE.Quaternion();
+const _rollInverse = new THREE.Quaternion();
+const _aimPoint = new THREE.Vector3();
+const _aimLocal = new THREE.Vector3();
+const _desiredLocal = new THREE.Vector3();
+const _correction = new THREE.Quaternion();
+const _boundaryClamp = createRoundedRectClampResult();
+const _cameraBoundary = createRoundedRectBoundary();
 
 /**
  * Third-person chase camera with smooth positional & rotational tracking,
@@ -20,7 +36,8 @@ const _shakeVec = new THREE.Vector3();
 export class CameraController {
   private readonly currentPos = new THREE.Vector3(0, 16, 52);
   private readonly currentQuat = new THREE.Quaternion();
-  private readonly currentUp = new THREE.Vector3(0, 1, 0);
+  private readonly cameraLocalQuat = new THREE.Quaternion();
+  private readonly lastShipQuat = new THREE.Quaternion();
   private currentFov = 62;
   private initialized = false;
   private orbitTime = 0;
@@ -31,11 +48,12 @@ export class CameraController {
 
     _forward.set(0, 0, -1).applyQuaternion(flight.quaternion);
     _up.set(0, 1, 0).applyQuaternion(flight.quaternion);
-    this.currentUp.copy(_up);
-
     _lookTarget.copy(flight.position).addScaledVector(_forward, 24).addScaledVector(_up, 0.85);
-    _lookMatrix.lookAt(this.currentPos, _lookTarget, this.currentUp);
-    this.currentQuat.setFromRotationMatrix(_lookMatrix);
+    _lookMatrix.lookAt(this.currentPos, _lookTarget, _up);
+    _desiredQuat.setFromRotationMatrix(_lookMatrix);
+    this.currentQuat.copy(_desiredQuat);
+    this.cameraLocalQuat.copy(flight.quaternion).invert().multiply(this.currentQuat).normalize();
+    this.lastShipQuat.copy(flight.quaternion);
 
     camera.position.copy(this.currentPos);
     camera.quaternion.copy(this.currentQuat);
@@ -93,25 +111,47 @@ export class CameraController {
         .add(flight.position);
     }
 
-    // Crisp camera up-vector roll tracking to prevent flip during loops without sluggish lag
-    const upAlpha = 1 - Math.exp(-(13.5 * camFollow) * safeDt);
-    this.currentUp.lerp(_up, upAlpha);
-    if (this.currentUp.lengthSq() < 0.001) {
-      this.currentUp.copy(_up);
+    if (flight.steeringMode === 'mouse-alignment') {
+      // Keep yaw/pitch follow gated during active steering so camera motion does not cancel
+      // projected hull motion. Roll remains a full-strength part of ship attitude.
+      // Keep camera rotation from canceling hull rotation while the real V - T error or actual
+      // hull angular velocity remains significant. `alignmentRemaining` is only the gap to V
+      // clamped to Boundary; it reaches zero at Boundary even while the ship still turns hard.
+      const hullRate = Math.hypot(flight.yawVelocity, flight.pitchVelocity);
+      const steeringActive = flight.steeringError.magnitude > 1 || hullRate > 0.05;
+      const follow = steeringActive ? 0 : 0.55;
+      if (steeringActive) {
+        // The steering gate pauses camera heading follow, but ship roll is part of the
+        // chase-camera attitude and must remain visible during mouse steering. Extract the
+        // local-Z twist from the ship delta and conjugate it into world space.
+        _shipLocalDelta.copy(this.lastShipQuat).invert().multiply(flight.quaternion).normalize();
+        _rollDelta.set(0, 0, _shipLocalDelta.z, _shipLocalDelta.w).normalize();
+        _rollInverse.copy(_rollDelta).invert();
+        _swingDelta.copy(_shipLocalDelta).multiply(_rollInverse).normalize();
+        _shipInverse.copy(this.lastShipQuat).invert();
+        _rollDelta.premultiply(this.lastShipQuat).multiply(_shipInverse).normalize();
+        _swingDelta.premultiply(this.lastShipQuat).multiply(_shipInverse).normalize();
+        this.currentQuat.premultiply(_rollDelta).normalize();
+        _partialDelta.copy(_identityQuat).slerp(_swingDelta, follow);
+        this.currentQuat.premultiply(_partialDelta).normalize();
+      } else {
+        _shipLocalDelta.copy(this.lastShipQuat).invert().multiply(flight.quaternion).normalize();
+        _rollDelta.set(0, 0, _shipLocalDelta.z, _shipLocalDelta.w).normalize();
+        _rollInverse.copy(_rollDelta).invert();
+        _swingDelta.copy(_shipLocalDelta).multiply(_rollInverse).normalize();
+        _shipInverse.copy(this.lastShipQuat).invert();
+        _rollDelta.premultiply(this.lastShipQuat).multiply(_shipInverse).normalize();
+        _swingDelta.premultiply(this.lastShipQuat).multiply(_shipInverse).normalize();
+        this.currentQuat.premultiply(_rollDelta).normalize();
+        _partialDelta.copy(_identityQuat).slerp(_swingDelta, follow);
+        this.currentQuat.premultiply(_partialDelta).normalize();
+      }
+      this.lastShipQuat.copy(flight.quaternion);
     } else {
-      this.currentUp.normalize();
+      _desiredQuat.copy(flight.quaternion).multiply(this.cameraLocalQuat).normalize();
+      this.currentQuat.copy(_desiredQuat);
+      this.lastShipQuat.copy(flight.quaternion);
     }
-
-    // Look directly ahead along ship's true forward flight vector with fast turn tracking
-    _lookTarget.copy(flight.position).addScaledVector(_forward, 34).addScaledVector(_up, 0.78);
-
-    _lookMatrix.lookAt(this.currentPos, _lookTarget, this.currentUp);
-    _desiredQuat.setFromRotationMatrix(_lookMatrix);
-
-    const angularSpeedMag = Math.hypot(flight.yawVelocity, flight.pitchVelocity);
-    const rotLambda = (20.0 + angularSpeedMag * 2.2) * camFollow;
-    const rotAlpha = 1 - Math.exp(-rotLambda * safeDt);
-    this.currentQuat.slerp(_desiredQuat, rotAlpha);
 
     // Subtle high-frequency propulsion tremor during boost + brief combat impact impulse
     camera.position.copy(this.currentPos);
@@ -136,6 +176,47 @@ export class CameraController {
       this.currentFov = nextFov;
       camera.fov = this.currentFov;
       camera.updateProjectionMatrix();
+    }
+
+    if (flight.steeringMode === 'mouse-alignment') {
+      const boundary = computeRoundedRectBoundary(
+        flight.aimBoundary.viewportWidth, flight.aimBoundary.viewportHeight, settings.joystickRadius,
+        STEERING_CONFIG.aimBoundaryWidth, STEERING_CONFIG.aimBoundaryHeight,
+        STEERING_CONFIG.aimBoundaryCornerRadius, _cameraBoundary,
+      );
+      this.constrainAimProjection(flight, camera, boundary);
+    }
+  }
+
+  private constrainAimProjection(
+    flight: FlightController, camera: THREE.PerspectiveCamera, boundary: typeof _cameraBoundary,
+  ): void {
+    // Constrain the physical projection by rotating the camera, not the cannon or HUD.
+    camera.updateMatrixWorld();
+    flight.getAimTargetPoint(_aimPoint, WEAPON_CONFIGS.player_pulse_twin.convergenceDistance);
+    _aimLocal.copy(_aimPoint).applyMatrix4(camera.matrixWorldInverse);
+    _aimPoint.project(camera);
+    const behind = _aimLocal.z >= -1e-6;
+    // Use camera-space bearing for points at/behind the eye; projecting them would mirror
+    // or produce NaNs on the camera plane. Exactly behind has no unique edge: choose right.
+    const bearing = Math.hypot(_aimLocal.x, _aimLocal.y);
+    const x = behind ? (bearing > 1e-9 ? _aimLocal.x / bearing * 1e6 : 1e6)
+      : _aimPoint.x * boundary.viewportWidth * 0.5;
+    const y = behind ? (bearing > 1e-9 ? -_aimLocal.y / bearing * 1e6 : 0)
+      : -_aimPoint.y * boundary.viewportHeight * 0.5;
+    clampToRoundedRect(x, y, boundary, _boundaryClamp);
+    if (behind || !_boundaryClamp.inside) {
+      // A small interior margin absorbs floating point roundoff at the boundary.
+      const cx = _boundaryClamp.clampedX * 0.99999;
+      const cy = _boundaryClamp.clampedY * 0.99999;
+      _desiredLocal.set(2 * cx / boundary.viewportWidth, -2 * cy / boundary.viewportHeight, 0.5)
+        .applyMatrix4(camera.projectionMatrixInverse).normalize();
+      // The correction maps the desired camera-local bearing onto the current world aim
+      // bearing; post-multiplying camera orientation therefore places the aim on desiredLocal.
+      _correction.setFromUnitVectors(_desiredLocal, _aimLocal.normalize());
+      this.currentQuat.multiply(_correction).normalize();
+      camera.quaternion.copy(this.currentQuat);
+      camera.updateMatrixWorld();
     }
   }
 

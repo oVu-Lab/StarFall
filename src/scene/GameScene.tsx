@@ -159,13 +159,13 @@ export function GameScene({
     });
   }, [combat, flight, missionManager, onPlayerDestroyed]);
 
-  // Snap chase camera and clear transient VFX when starting or resetting a session
+  // A session reset snaps the chase camera; resuming must not reset the aligned view.
   useEffect(() => {
     vfxRef.current?.clear();
     if (phase === 'playing' && camera instanceof THREE.PerspectiveCamera) {
       cameraController.snapToShip(flight, camera, settingsRef.current.cameraDistance);
     }
-  }, [snapCameraSignal, phase, camera, cameraController, flight, settingsRef]);
+  }, [snapCameraSignal, camera, cameraController, flight, settingsRef]);
 
   // Sync camera draw distance when graphics settings change
   useEffect(() => {
