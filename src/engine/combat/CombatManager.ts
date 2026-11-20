@@ -21,7 +21,7 @@ import { intersectSegmentSphere, intersectSphereSphere } from './CollisionSystem
 import { EnemyAIController } from './EnemyAIController';
 import { applyDamage, createHealthState, getHealthRatio, resetHealthState } from './HealthSystem';
 import { ProjectilePool } from './ProjectilePool';
-import { advanceEvasion, advanceLock, canLaunchMissile, canMissileDamageTarget, isIncomingMissile, shouldAiUseMissile, steerMissile } from './MissileRules';
+import { advanceEvasion, MISSILE_EVASION_SECONDS, MISSILE_LOCK_SECONDS, canLaunchMissile, canMissileDamageTarget, guideMissile, isIncomingMissile, isTargetInCameraView, shouldAiUseMissile, updateTargetLock } from './MissileRules';
 
 export const PLAYER_ENTITY_ID = 'player-1';
 export const PLAYER_COLLISION_RADIUS = 3.2;
@@ -523,12 +523,12 @@ export class CombatManager {
 
     if (camera) {
       this.projectHudTelemetry(flight, camera, telemetry);
-      this.updatePlayerLock(safeDt, telemetry);
+      this.updatePlayerLock(safeDt, telemetry, camera);
     }
     this.updateMissileHud(telemetry, camera);
   }
 
-  private updatePlayerLock(dt: number, telemetry: FlightTelemetry): void {
+  private updatePlayerLock(dt: number, telemetry: FlightTelemetry, camera: THREE.PerspectiveCamera): void {
     const halfW = telemetry.aimBoundaryWidthPx / Math.max(1, telemetry.viewportWidthPx) * 0.5;
     const halfH = telemetry.aimBoundaryHeightPx / Math.max(1, telemetry.viewportHeightPx) * 0.5;
     const aimX = telemetry.boresightScreenX;
@@ -545,16 +545,28 @@ export class CombatManager {
       if (score < best) { best = score; candidate = marker; }
     }
 
-    const sameTarget = Boolean(candidate && candidate.entityId === this.lockTargetId);
-    const lockStep = advanceLock(this.lockProgress, sameTarget, dt);
+    const currentTarget = this.enemies.find((enemy) => enemy.id === this.lockTargetId);
+    const currentTargetInCameraView = Boolean(currentTarget && isTargetInCameraView(
+      camera,
+      currentTarget.position,
+      currentTarget.collisionRadius,
+    ));
+    const lockStep = updateTargetLock(
+      this.lockTargetId,
+      this.lockProgress,
+      candidate?.entityId ?? null,
+      Boolean(currentTarget?.active && !currentTarget.health.isDestroyed),
+      currentTargetInCameraView,
+      dt,
+    );
     if (lockStep.escaped) this.lockEscapedTimer = 1.2;
-    if (!sameTarget) this.lockTargetId = candidate?.entityId ?? null;
-    this.lockProgress = candidate ? lockStep.progress : 0;
+    this.lockTargetId = lockStep.targetId;
+    this.lockProgress = lockStep.progress;
     const locked = this.enemies.find((e) => e.id === this.lockTargetId && e.active && !e.health.isDestroyed);
     if (!locked) { this.lockTargetId = null; this.lockProgress = 0; }
-    telemetry.missileHud.lockProgress = this.lockProgress / 3;
+    telemetry.missileHud.lockProgress = this.lockProgress / MISSILE_LOCK_SECONDS;
     telemetry.missileHud.lockTargetName = locked?.callsign ?? '';
-    telemetry.missileHud.lockReady = Boolean(locked && this.lockProgress >= 3);
+    telemetry.missileHud.lockReady = Boolean(locked && this.lockProgress >= MISSILE_LOCK_SECONDS);
     telemetry.missileHud.lockEscaped = this.lockEscapedTimer > 0;
     telemetry.missileHud.missilesRemaining = this.missilesRemaining;
   }
@@ -584,7 +596,7 @@ export class CombatManager {
     const forward = _forwardVec.set(0, 0, -1).applyQuaternion(enemy.quaternion);
     if (distance > 520 || forward.dot(_aimDir) < 0.94) { enemy.missileLockTimer = 0; return; }
     enemy.missileLockTimer = (enemy.missileLockTimer ?? 0) + dt;
-    if (enemy.missileLockTimer < 1.8) return;
+    if (enemy.missileLockTimer < MISSILE_LOCK_SECONDS) return;
     const origin = _muzzleWorld.copy(enemy.position).addScaledVector(forward, 3.2);
     const missile = this.projectiles.spawn(enemy.id, 'enemy', MISSILE_WEAPON, origin, forward, enemy.velocity);
     missile.isHomingMissile = true;
@@ -605,10 +617,8 @@ export class CombatManager {
       const targetPos = missile.targetId === PLAYER_ENTITY_ID ? flight.position : targetEnemy!.position;
       const targetVelocity = missile.targetId === PLAYER_ENTITY_ID ? flight.velocity : targetEnemy!.velocity;
       missile.evasionProgress = advanceEvasion(missile.evasionProgress ?? 0, targetVelocity, missile.launcherForward!, dt);
-      if ((missile.evasionProgress ?? 0) >= 0.26) { missile.targetLost = true; continue; }
-      _aimTarget.subVectors(targetPos, missile.position).normalize();
-      steerMissile(missile.direction, _aimTarget, dt);
-      missile.velocity.copy(missile.direction).multiplyScalar(MISSILE_WEAPON.projectileSpeed);
+      if ((missile.evasionProgress ?? 0) >= MISSILE_EVASION_SECONDS) { missile.targetLost = true; continue; }
+      guideMissile(missile.direction, missile.velocity, missile.position, targetPos, targetVelocity, dt);
     }
   }
 
