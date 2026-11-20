@@ -109,8 +109,8 @@ export function MainMenu({
         </h1>
 
         <p className="mt-3 max-w-md text-sm leading-relaxed text-slate-300">
-          Six-degree-of-freedom arcade space combat. Command the VX-9 Vanguard across five
-          escalating campaign operations against tactical AI fighter squadrons.
+          Six-degree-of-freedom arcade space combat. Command the VX-9 Vanguard through six
+          escalating operations, from first contact to the Aurelia evacuation.
         </p>
       </div>
 
@@ -182,7 +182,7 @@ export function MainMenu({
         <span aria-hidden="true">·</span>
         <span>Shift Boost</span>
         <span aria-hidden="true">·</span>
-        <span>5 Campaign Missions</span>
+        <span>{CAMPAIGN_MISSIONS.length} Campaign Missions</span>
       </div>
     </div>
   );

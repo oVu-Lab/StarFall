@@ -2,14 +2,16 @@ import type * as THREE from 'three';
 import { DIFFICULTY_PROFILES } from '../../config/difficulty';
 import { getNextMission } from '../../config/missions';
 import type { DamageEvent, DestructionEvent } from '../../types/combat';
-import { TRANSPORT_ENTITY_ID } from '../combat/CombatManager';
 import type {
   MissionDefinition,
+  MissionEvent,
   MissionHudSnapshot,
   MissionResult,
-  ObjectiveRuntimeState,
 } from '../../types/mission';
 import type { CombatManager } from '../combat/CombatManager';
+import { MissionEventAdapter } from './MissionEventAdapter';
+import { MissionRuntime } from './MissionRuntime';
+import { CombatMissionWorldAdapter, type MissionWorldAdapter } from './MissionWorldAdapter';
 import { calculateMissionScore } from './RankCalculator';
 
 export type MissionRunStatus = 'idle' | 'active' | 'completed' | 'failed';
@@ -19,28 +21,24 @@ export interface MissionManagerCallbacks {
   onMissionEnd?: (result: MissionResult) => void;
 }
 
-/**
- * Decoupled single-player campaign mission runtime.
- * Orchestrates mission waves, real-time objective evaluation (eliminate_all, survive_duration,
- * defeat_target, survive_waves), mission completion/failure detection, and deterministic ranking.
- * Never coupled to React — emits discrete HUD snapshots only on meaningful state transitions.
- */
+/** Coordinates world actions and forwards event batches to the definition-driven runtime. */
 export class MissionManager {
   private mission: MissionDefinition | null = null;
+  private combat: CombatManager | null = null;
+  private world: MissionWorldAdapter | null = null;
+  private readonly runtime = new MissionRuntime();
+  private readonly eventAdapter = new MissionEventAdapter();
   private status: MissionRunStatus = 'idle';
   private elapsedSec = 0;
   private currentWaveIdx = 0;
-  private completedWaves = 0;
+  private completedWaves = new Set<number>();
   private pendingWaveDelay = -1;
-  private defeatedEnemies = 0;
-  private defeatedCallsigns = new Set<string>();
-  private objectives: ObjectiveRuntimeState[] = [];
   private announcement: string | null = null;
   private announcementKind: 'info' | 'complete' | 'warning' = 'info';
   private announcementTimer = 0;
-  private lastPublishedWholeSec = -1;
+  private lastHudElapsedSec = 0;
+  private readonly pendingEvents: MissionEvent[] = [];
   private callbacks: MissionManagerCallbacks = {};
-  private transportHud: MissionHudSnapshot['transport'] = null;
 
   public setCallbacks(callbacks: MissionManagerCallbacks): void {
     this.callbacks = callbacks;
@@ -54,8 +52,17 @@ export class MissionManager {
     return this.mission;
   }
 
+  public getWorldActors() {
+    const state = this.runtime.getState();
+    return state && this.world ? this.world.getSnapshot(state) : null;
+  }
+
   public getHudSnapshot(): MissionHudSnapshot | null {
-    if (!this.mission) return null;
+    if (!this.mission || !this.world) return null;
+    const state = this.runtime.getState();
+    if (!state) return null;
+    const world = this.world.getSnapshot(state);
+    const stage = this.mission.stages.find((candidate) => candidate.id === state.currentStageId);
     return {
       missionId: this.mission.id,
       missionCode: this.mission.code,
@@ -63,11 +70,15 @@ export class MissionManager {
       difficultyLabel: DIFFICULTY_PROFILES[this.mission.difficulty].label,
       waveIndex: Math.min(this.currentWaveIdx + 1, this.mission.waves.length),
       totalWaves: this.mission.waves.length,
-      elapsedSec: this.elapsedSec,
-      objectives: this.objectives.map((o) => ({ ...o })),
+      stageId: state.currentStageId,
+      stageLabel: stage?.label ?? '',
+      elapsedSec: state.elapsedSec,
+      objectives: Object.values(state.objectives),
       announcement: this.announcement,
       announcementKind: this.announcementKind,
-      transport: this.transportHud ? { ...this.transportHud } : null,
+      transport: world.transport,
+      relay: world.relay,
+      interaction: world.interaction,
     };
   }
 
@@ -78,315 +89,170 @@ export class MissionManager {
     playerPos: THREE.Vector3,
   ): MissionHudSnapshot {
     this.mission = mission;
+    this.combat = combat;
+    this.world = new CombatMissionWorldAdapter(combat);
     this.status = 'active';
     this.elapsedSec = 0;
     this.currentWaveIdx = 0;
-    this.completedWaves = 0;
+    this.completedWaves.clear();
     this.pendingWaveDelay = -1;
-    this.defeatedEnemies = 0;
-    this.defeatedCallsigns.clear();
-    this.lastPublishedWholeSec = 0;
+    this.pendingEvents.length = 0;
+    this.announcementTimer = 0;
+    this.lastHudElapsedSec = 0;
 
-    this.objectives = mission.objectives.map((def) => ({
-      id: def.id,
-      type: def.type,
-      label: def.label,
-      status: 'active',
-      currentCount: 0,
-      targetCount: def.targetCount ?? (def.type === 'defeat_target' ? 1 : mission.totalEnemyCount),
-      elapsedSec: 0,
-      targetDurationSec: def.targetDurationSec ?? 0,
-      targetCallsign: def.targetCallsign,
-    }));
-
-    combat.clearCombatState(playerMaxHull, true);
-
-    if (mission.escort) {
-      combat.initializeTransport(mission.escort.callsign, mission.escort.maxHull, mission.escort.route, playerPos);
-      this.transportHud = {
-        callsign: mission.escort.callsign,
-        currentHull: mission.escort.maxHull,
-        maxHull: mission.escort.maxHull,
-        progress: 0,
-      };
-    } else {
-      this.transportHud = null;
+    this.runtime.start(mission);
+    this.world.start(mission, playerMaxHull, playerPos);
+    if (mission.waves[0]) {
+      this.world.spawnWave(mission, 0, playerPos);
+      this.runtime.processEvents([{ type: 'wave_started', waveNumber: mission.waves[0].waveNumber }]);
     }
-
     const firstWave = mission.waves[0];
-    if (firstWave) {
-      combat.spawnMissionWave(firstWave, mission.difficulty, mission.difficultyNumeric, playerPos);
-    }
-
-    this.setAnnouncement(
-      `${mission.code} · ${mission.name.toUpperCase()} — ${firstWave?.label ?? 'ENGAGE'}`,
-      'info',
-      3.4,
-    );
-
-    const snapshot = this.getHudSnapshot()!;
-    this.callbacks.onHudUpdate?.(snapshot);
-    return snapshot;
+    this.setAnnouncement(`${mission.code} · ${mission.name.toUpperCase()} — ${firstWave?.label ?? 'ENGAGE'}`, 'info', 3.4);
+    this.emitHud();
+    return this.getHudSnapshot()!;
   }
 
   public abortMission(): void {
-    this.status = 'idle';
+    this.world?.cleanup();
+    this.world = null;
     this.mission = null;
-    this.objectives = [];
+    this.combat = null;
+    this.status = 'idle';
+    this.pendingEvents.length = 0;
     this.announcement = null;
     this.announcementTimer = 0;
     this.pendingWaveDelay = -1;
   }
 
-  public handleDestruction(evt: DestructionEvent, combat: CombatManager): void {
-    if (this.status !== 'active' || !this.mission) return;
+  /** Combat callbacks are queued so a simulation frame is resolved as one ordered event batch. */
+  public handleDestruction(event: DestructionEvent): void {
+    this.pendingEvents.push(...this.eventAdapter.fromDestruction(event));
+  }
 
-    if (evt.faction === 'player') {
-      this.finishMission('failed', combat);
-      return;
-    }
-
-    if (evt.faction === 'enemy') {
-      this.defeatedEnemies += 1;
-      if (evt.callsign) {
-        this.defeatedCallsigns.add(evt.callsign);
-      }
-      this.evaluateObjectives(combat);
-      this.emitHud();
+  public handleDamage(event: DamageEvent): void {
+    this.pendingEvents.push(...this.eventAdapter.fromDamage(event));
+    if (this.mission && event.targetId === this.mission.relay?.id) {
+      this.setAnnouncement(
+        event.destroyed ? 'COBALT RELAY LOST · DEFENSE LINE BREACHED' : `COBALT RELAY HIT · ${Math.ceil(event.remainingHealth)} INTEGRITY`,
+        event.destroyed ? 'warning' : 'info',
+        2.2,
+      );
+    } else if (event.targetId === 'transport-1') {
+      this.setAnnouncement(
+        event.destroyed ? 'TRANSPORT HULL CRITICAL · EXTRACTION COMPROMISED' : `TRANSPORT HIT · ${Math.ceil(event.remainingHealth)} HULL REMAINING`,
+        'warning',
+        2.2,
+      );
     }
   }
 
-  public handleDamage(evt: DamageEvent): void {
-    if (this.status !== 'active' || evt.targetId !== TRANSPORT_ENTITY_ID) return;
-    if (this.transportHud) {
-      this.transportHud.currentHull = evt.remainingHealth;
-      this.transportHud.maxHull = evt.maxHealth;
-    }
-    const warning = evt.destroyed
-      ? 'TRANSPORT HULL CRITICAL · EXTRACTION COMPROMISED'
-      : `TRANSPORT HIT · ${Math.ceil(evt.remainingHealth)} HULL REMAINING`;
-    this.setAnnouncement(warning, 'warning', 2.2);
-    this.emitHud();
-  }
-
-  public update(dt: number, combat: CombatManager, playerPos: THREE.Vector3): void {
-    if (this.status !== 'active' || !this.mission) return;
-
+  public update(dt: number, _combat: CombatManager, playerPos: THREE.Vector3, interactHeld = false): void {
+    if (this.status !== 'active' || !this.mission || !this.world || !this.combat) return;
     const safeDt = Math.min(Math.max(dt, 0.0001), 0.05);
     this.elapsedSec += safeDt;
-    combat.updateTransport(safeDt);
-    if (combat.transport && this.transportHud) {
-      this.transportHud.currentHull = combat.transport.health.current;
-      this.transportHud.maxHull = combat.transport.health.max;
-      this.transportHud.progress = combat.transport.progress;
+    const state = this.runtime.getState();
+    if (!state) return;
+    const events = this.pendingEvents.splice(0);
+    events.push(...this.world.update(safeDt, playerPos, interactHeld, state));
+    events.push({ type: 'timer_elapsed', deltaSec: safeDt, elapsedSec: this.elapsedSec });
+
+    const activeEnemies = this.world.getActiveEnemyCount();
+    const currentWave = this.mission.waves[this.currentWaveIdx];
+    if (currentWave && activeEnemies === 0 && !this.completedWaves.has(currentWave.waveNumber)) {
+      this.completedWaves.add(currentWave.waveNumber);
+      events.push({ type: 'wave_cleared', waveNumber: currentWave.waveNumber });
+      const nextWave = this.mission.waves[this.currentWaveIdx + 1];
+      if (nextWave) {
+        this.pendingWaveDelay = Math.max(0.1, nextWave.triggerDelaySec);
+        const hasBoss = nextWave.enemies.some((enemy) => enemy.isPriorityTarget);
+        this.setAnnouncement(
+          hasBoss
+            ? `WAVE ${nextWave.waveNumber}/${this.mission.waves.length} INCOMING — COMMAND WING DETECTED`
+            : `WAVE ${nextWave.waveNumber}/${this.mission.waves.length} INCOMING — ${nextWave.label.toUpperCase()}`,
+          hasBoss ? 'warning' : 'info',
+          Math.max(2.6, nextWave.triggerDelaySec + 1.2),
+        );
+      }
     }
 
-    if (this.mission.escort && combat.transport?.health.isDestroyed) {
-      this.finishMission('failed', combat);
-      return;
+    if (this.pendingWaveDelay > 0) {
+      this.pendingWaveDelay -= safeDt;
+      if (this.pendingWaveDelay <= 0 && this.currentWaveIdx + 1 < this.mission.waves.length) {
+        this.pendingWaveDelay = -1;
+        this.currentWaveIdx += 1;
+        const nextWave = this.mission.waves[this.currentWaveIdx];
+        this.world.spawnWave(this.mission, this.currentWaveIdx, playerPos);
+        events.push({ type: 'wave_started', waveNumber: nextWave.waveNumber });
+      }
     }
 
-    let shouldEmitHud = false;
-
-    // 1. Decay transient tactical banner announcement
     if (this.announcementTimer > 0) {
       this.announcementTimer = Math.max(0, this.announcementTimer - safeDt);
-      if (this.announcementTimer <= 0 && this.announcement !== null) {
-        this.announcement = null;
-        shouldEmitHud = true;
-      }
+      if (this.announcementTimer <= 0) this.announcement = null;
     }
 
-    // 2. Check player destruction safeguard (in case collision killed player)
-    if (combat.playerHealth.isDestroyed) {
-      this.finishMission('failed', combat);
+    this.runtime.processEvents(events);
+    const runtimeState = this.runtime.getState();
+    if (!runtimeState) return;
+    this.elapsedSec = runtimeState.elapsedSec;
+    if (runtimeState.status !== 'active') {
+      this.status = runtimeState.status;
+      this.finishMission(runtimeState.status, this.combat);
       return;
     }
 
-    // 3. Advance timed survival objectives
-    const wholeSec = Math.floor(this.elapsedSec);
-    for (let i = 0; i < this.objectives.length; i++) {
-      const obj = this.objectives[i];
-      if (obj.status !== 'active') continue;
-      if (obj.type === 'survive_duration') {
-        obj.elapsedSec = Math.min(obj.targetDurationSec, this.elapsedSec);
-        if (obj.elapsedSec >= obj.targetDurationSec) {
-          obj.status = 'completed';
-          this.setAnnouncement(`OBJECTIVE COMPLETE · ${obj.label.toUpperCase()}`, 'complete', 2.8);
-          shouldEmitHud = true;
-        }
-      }
-    }
-
-    if (wholeSec !== this.lastPublishedWholeSec) {
-      this.lastPublishedWholeSec = wholeSec;
-      const hasTimedObjective = this.objectives.some(
-        (o) => o.type === 'survive_duration' && o.status === 'active',
-      );
-      if (hasTimedObjective || this.transportHud) {
-        shouldEmitHud = true;
-      }
-    }
-
-    // 4. Wave progression check
-    const activeEnemies = combat.getActiveEnemyCount();
-    const totalWaves = this.mission.waves.length;
-
-    if (activeEnemies === 0) {
-      // Current wave cleared
-      if (this.completedWaves < this.currentWaveIdx + 1) {
-        this.completedWaves = this.currentWaveIdx + 1;
-        this.evaluateObjectives(combat);
-        shouldEmitHud = true;
-
-        // If another wave exists, schedule its entry with tactical announcement
-        if (this.currentWaveIdx + 1 < totalWaves) {
-          const nextWave = this.mission.waves[this.currentWaveIdx + 1];
-          this.pendingWaveDelay = Math.max(0.1, nextWave.triggerDelaySec);
-          const hasBoss = nextWave.enemies.some((e) => e.isPriorityTarget);
-          this.setAnnouncement(
-            hasBoss
-              ? `WAVE ${nextWave.waveNumber}/${totalWaves} INCOMING — COMMAND WING DETECTED`
-              : `WAVE ${nextWave.waveNumber}/${totalWaves} INCOMING — ${nextWave.label.toUpperCase()}`,
-            hasBoss ? 'warning' : 'info',
-            Math.max(2.6, nextWave.triggerDelaySec + 1.2),
-          );
-        }
-      }
-
-      if (this.pendingWaveDelay > 0) {
-        this.pendingWaveDelay -= safeDt;
-        if (this.pendingWaveDelay <= 0 && this.currentWaveIdx + 1 < totalWaves) {
-          this.pendingWaveDelay = -1;
-          this.currentWaveIdx += 1;
-          const nextWave = this.mission.waves[this.currentWaveIdx];
-          combat.spawnMissionWave(
-            nextWave,
-            this.mission.difficulty,
-            this.mission.difficultyNumeric,
-            playerPos,
-          );
-          shouldEmitHud = true;
-        }
-      }
-    }
-
-    // 5. Evaluate completion across all objectives
-    const allComplete = this.evaluateObjectives(combat);
-    if (allComplete) {
-      this.finishMission('completed', combat);
-      return;
-    }
-
-    if (shouldEmitHud) {
+    const activeScan = runtimeState.objectives && Object.values(runtimeState.objectives).some(
+      (objective) => objective.type === 'recon' && objective.status === 'active',
+    );
+    const timerTick = Math.floor(runtimeState.elapsedSec) !== Math.floor(this.lastHudElapsedSec);
+    const eventNeedsUpdate = events.some((event) =>
+      event.type !== 'timer_elapsed' && event.type !== 'actor_progress' && event.type !== 'scan_progress',
+    );
+    const scanNeedsUpdate = activeScan && interactHeld && runtimeState.elapsedSec - this.lastHudElapsedSec >= 0.08;
+    if (eventNeedsUpdate || timerTick || scanNeedsUpdate) {
+      this.lastHudElapsedSec = runtimeState.elapsedSec;
       this.emitHud();
     }
-  }
-
-  private evaluateObjectives(combat: CombatManager): boolean {
-    if (!this.mission) return false;
-    let allComplete = true;
-
-    for (let i = 0; i < this.objectives.length; i++) {
-      const obj = this.objectives[i];
-
-      if (obj.type === 'eliminate_all') {
-        obj.currentCount = Math.min(obj.targetCount, this.defeatedEnemies);
-        if (obj.status === 'active' && obj.currentCount >= obj.targetCount && combat.getActiveEnemyCount() === 0) {
-          obj.status = 'completed';
-        }
-      } else if (obj.type === 'survive_waves') {
-        obj.currentCount = Math.min(obj.targetCount, this.completedWaves);
-        if (obj.status === 'active' && obj.currentCount >= obj.targetCount && combat.getActiveEnemyCount() === 0) {
-          obj.status = 'completed';
-        }
-      } else if (obj.type === 'defeat_target') {
-        const hitTarget = obj.targetCallsign ? this.defeatedCallsigns.has(obj.targetCallsign) : false;
-        obj.currentCount = hitTarget ? 1 : 0;
-        if (obj.status === 'active' && hitTarget) {
-          obj.status = 'completed';
-          this.setAnnouncement(
-            `PRIORITY TARGET ELIMINATED · ${obj.targetCallsign ?? 'COMMANDER'}`,
-            'complete',
-            2.8,
-          );
-        }
-      } else if (obj.type === 'survive_duration') {
-        if (obj.elapsedSec >= obj.targetDurationSec) {
-          obj.status = 'completed';
-        }
-      } else if (obj.type === 'escort_transport') {
-        const transport = combat.transport;
-        obj.currentCount = transport && transport.progress >= 1 ? 1 : 0;
-        if (
-          obj.status === 'active' &&
-          transport &&
-          transport.progress >= 1 &&
-          !transport.health.isDestroyed
-        ) {
-          obj.status = 'completed';
-          this.setAnnouncement('TRANSPORT EXTRACTED · OPERATION COMPLETE', 'complete', 4);
-        }
-      }
-
-      if (obj.status !== 'completed') {
-        allComplete = false;
-      }
-    }
-
-    return allComplete;
   }
 
   private finishMission(outcome: 'completed' | 'failed', combat: CombatManager): void {
-    if (!this.mission || this.status !== 'active') return;
-    this.status = outcome;
-
-    if (outcome === 'failed') {
-      for (const obj of this.objectives) {
-        if (obj.status === 'active') obj.status = 'failed';
-      }
-    }
-
-    const completed = outcome === 'completed';
+    if (!this.mission || this.status !== outcome) return;
+    const runtime = this.runtime.getState();
     const remainingHull = Math.max(0, combat.playerHealth.current);
     const maxHull = Math.max(1, combat.playerHealth.max);
-
     const scoreBreakdown = calculateMissionScore({
-      enemiesDefeated: this.defeatedEnemies,
+      enemiesDefeated: combat.stats.kills,
       totalEnemies: this.mission.totalEnemyCount,
       shotsFired: combat.stats.shotsFired,
       shotsHit: combat.stats.shotsHit,
       remainingHull,
       maxHull,
       damageReceived: combat.stats.damageTaken,
-      timeTakenSec: this.elapsedSec,
+      timeTakenSec: runtime?.elapsedSec ?? this.elapsedSec,
       parTimeSec: this.mission.parTimeSec,
-      completed,
+      completed: outcome === 'completed',
       transportRemainingRatio: combat.transport
         ? combat.transport.health.current / combat.transport.health.max
         : undefined,
     });
-
-    const nextMission = completed ? getNextMission(this.mission.id) : null;
-    const accuracyPct =
-      combat.stats.shotsFired > 0
-        ? Math.round((combat.stats.shotsHit / combat.stats.shotsFired) * 100)
-        : 0;
-
+    const nextMission = outcome === 'completed' ? getNextMission(this.mission.id) : null;
+    const accuracyPct = combat.stats.shotsFired > 0
+      ? Math.round((combat.stats.shotsHit / combat.stats.shotsFired) * 100)
+      : 0;
     const result: MissionResult = {
       missionId: this.mission.id,
       missionNumber: this.mission.number,
       missionName: this.mission.name,
       difficulty: this.mission.difficulty,
       status: outcome,
-      rank: completed ? scoreBreakdown.rank : null,
+      rank: outcome === 'completed' ? scoreBreakdown.rank : null,
       scoreBreakdown,
-      enemiesDefeated: this.defeatedEnemies,
+      enemiesDefeated: combat.stats.kills,
       totalEnemies: this.mission.totalEnemyCount,
       shotsFired: combat.stats.shotsFired,
       shotsHit: combat.stats.shotsHit,
       accuracyPct,
-      timeTakenSec: this.elapsedSec,
+      timeTakenSec: runtime?.elapsedSec ?? this.elapsedSec,
       damageReceived: Math.round(combat.stats.damageTaken),
       remainingHullPct: Math.round((remainingHull / maxHull) * 100),
       transportRemainingHullPct: combat.transport
@@ -397,25 +263,18 @@ export class MissionManager {
       isNewBestRank: false,
       isNewBestScore: false,
     };
-
     this.emitHud();
     this.callbacks.onMissionEnd?.(result);
   }
 
-  private setAnnouncement(
-    text: string,
-    kind: 'info' | 'complete' | 'warning',
-    durationSec: number,
-  ): void {
+  private setAnnouncement(text: string, kind: 'info' | 'complete' | 'warning', durationSec: number): void {
     this.announcement = text;
     this.announcementKind = kind;
     this.announcementTimer = durationSec;
   }
 
   private emitHud(): void {
-    const snap = this.getHudSnapshot();
-    if (snap) {
-      this.callbacks.onHudUpdate?.(snap);
-    }
+    const snapshot = this.getHudSnapshot();
+    if (snapshot) this.callbacks.onHudUpdate?.(snapshot);
   }
 }

@@ -39,6 +39,9 @@ export function MissionSelectView({
     CAMPAIGN_MISSIONS.find((m) => m.id === selectedMissionId) ?? CAMPAIGN_MISSIONS[0];
   const selectedRecord = campaignSave.missions[selected.id];
   const selectedUnlocked = isMissionUnlocked(selected, campaignSave);
+  const unlockRequirement = selected.unlockRequirementId
+    ? CAMPAIGN_MISSIONS.find((mission) => mission.id === selected.unlockRequirementId)
+    : null;
   const completedCount = CAMPAIGN_MISSIONS.filter((m) => campaignSave.missions[m.id]?.completed).length;
 
   return (
@@ -63,7 +66,7 @@ export function MissionSelectView({
               Campaign Operations
             </h1>
             <p className="text-xs text-slate-400">
-              Select a combat deployment. Complete missions to unlock higher-threat sectors.
+              Choose an operation. Complete its objectives to unlock the next deployment.
             </p>
           </div>
         </div>
@@ -210,12 +213,21 @@ export function MissionSelectView({
                     key={obj.id}
                     className="flex items-center justify-between border border-slate-800/90 bg-[#081226]/70 px-3.5 py-2 text-xs text-slate-200"
                   >
-                    <span>{obj.label}</span>
+                    <span>
+                      {obj.label}
+                      {obj.optional && <span className="ml-2 font-mono text-[10px] text-amber-300">OPTIONAL</span>}
+                    </span>
                     <span className="font-mono text-[11px] text-cyan-300">
-                      {obj.type === 'survive_duration'
+                      {obj.type === 'recon'
+                        ? `SCAN ${obj.durationSec ?? obj.scanDurationSec ?? 5}s`
+                        : obj.type === 'defend'
+                          ? `${obj.durationSec ?? obj.targetDurationSec ?? 0}s · ${obj.targetWaves ?? obj.targetCount ?? 0} WAVES`
+                        : obj.type === 'survive_duration'
                         ? `${obj.targetDurationSec}s`
-                        : obj.type === 'defeat_target'
+                        : obj.type === 'defeat_target' || obj.type === 'intercept' || obj.type === 'boss'
                           ? obj.targetCallsign
+                          : obj.type === 'extract'
+                            ? 'INTERACTION'
                           : `${obj.targetCount}`}
                     </span>
                   </li>
@@ -254,7 +266,9 @@ export function MissionSelectView({
               <div className="flex items-center justify-center gap-2.5 border border-slate-700 bg-[#081226] px-5 py-3.5 text-xs text-slate-400">
                 <ShieldAlert className="h-4 w-4 text-amber-400 shrink-0" />
                 <span>
-                  Complete Mission {String(selected.number - 1).padStart(2, '0')} to unlock this deployment.
+                  {unlockRequirement
+                    ? `Complete ${unlockRequirement.code} — ${unlockRequirement.name} to unlock this deployment.`
+                    : 'This deployment is currently locked.'}
                 </span>
               </div>
             )}

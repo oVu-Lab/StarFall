@@ -814,7 +814,7 @@ export function FlightHUD({
           </button>
 
           {missionHud && (
-            <div className="hidden w-64 border border-slate-700/75 bg-[#040a18]/84 px-3.5 py-2.5 sm:block">
+            <div className="hidden w-72 border border-slate-700/75 bg-[#040a18]/84 px-3.5 py-2.5 sm:block">
               <div className="flex items-center justify-between border-b border-slate-800/90 pb-1.5 font-mono text-[11px]">
                 <span className="font-semibold text-cyan-300">
                   {missionHud.missionCode} · {missionHud.missionName}
@@ -825,34 +825,51 @@ export function FlightHUD({
                   </span>
                 )}
               </div>
+              {missionHud.stageLabel && (
+                <div className="mt-1 font-mono text-[10px] uppercase tracking-wider text-slate-400">
+                  {missionHud.stageLabel}
+                </div>
+              )}
               <ul className="mt-2 space-y-1.5">
                 {missionHud.objectives.map((obj) => {
                   const done = obj.status === 'completed';
                   const progressLabel =
-                    obj.type === 'survive_duration'
-                      ? `${Math.floor(obj.elapsedSec)}s / ${obj.targetDurationSec}s`
-                      : obj.type === 'escort_transport'
-                        ? (missionHud.transport?.progress ?? 0) >= 1 ? 'EXTRACTED' : `${Math.round((missionHud.transport?.progress ?? 0) * 100)}%`
-                      : obj.type === 'defeat_target'
+                    obj.status === 'locked'
+                      ? 'LOCKED'
+                      : obj.status === 'skipped'
+                        ? 'SKIPPED'
+                      : obj.status === 'failed'
+                        ? 'MISSED'
+                      : obj.type === 'recon'
+                        ? `${Math.floor(obj.progress * 100)}% SCAN`
+                      : obj.type === 'defend'
+                        ? `${obj.currentCount}/${obj.targetCount} WAVES`
+                      : obj.type === 'survive_duration'
+                        ? `${Math.floor(obj.elapsedSec)}s / ${obj.targetDurationSec}s`
+                      : obj.type === 'escort' || obj.type === 'escort_transport'
+                        ? (missionHud.transport?.progress ?? obj.progress) >= 1 ? 'EXTRACTED' : `${Math.round((missionHud.transport?.progress ?? obj.progress) * 100)}%`
+                      : obj.type === 'defeat_target' || obj.type === 'intercept' || obj.type === 'boss'
                         ? done
                           ? 'DONE'
                           : 'ACTIVE'
+                      : obj.type === 'extract'
+                        ? done ? 'CONFIRMED' : 'AWAITING'
                         : `${obj.currentCount}/${obj.targetCount}`;
 
                   return (
                     <li
                       key={obj.id}
                       className={`flex items-start justify-between gap-2 text-[11px] ${
-                        done ? 'text-slate-500 line-through' : 'text-slate-200'
+                        done || obj.status === 'skipped' || obj.status === 'failed' ? 'text-slate-500' : obj.status === 'locked' ? 'text-slate-500' : 'text-slate-200'
                       }`}
                     >
                       <span className="flex items-start gap-1.5">
                         {done ? (
                           <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-cyan-400" />
                         ) : (
-                          <Circle className="mt-0.5 h-3 w-3 shrink-0 text-cyan-300/80" />
+                          <Circle className={`mt-0.5 h-3 w-3 shrink-0 ${obj.status === 'locked' ? 'text-slate-600' : 'text-cyan-300/80'}`} />
                         )}
-                        <span>{obj.label}</span>
+                        <span>{obj.label}{obj.optional ? ' · OPTIONAL' : ''}</span>
                       </span>
                       <span className="font-mono text-[10px] tabular-nums text-cyan-300 shrink-0">
                         {progressLabel}
@@ -861,6 +878,37 @@ export function FlightHUD({
                   );
                 })}
               </ul>
+              {missionHud.interaction && (
+                <div className="mt-2 border-t border-slate-800/90 pt-2">
+                  <div className={`font-mono text-[10px] tracking-wider ${missionHud.interaction.available ? 'text-amber-200' : 'text-slate-400'}`}>
+                    {missionHud.interaction.prompt}
+                  </div>
+                  {missionHud.interaction.kind === 'scan' && (
+                    <div className="mt-1 h-1 bg-slate-800">
+                      <div className="h-full bg-cyan-400 transition-[width]" style={{ width: `${Math.round(missionHud.interaction.progress * 100)}%` }} />
+                    </div>
+                  )}
+                  {missionHud.interaction.distance != null && (
+                    <div className="mt-1 text-right font-mono text-[9px] text-slate-500">
+                      {Math.round(missionHud.interaction.distance)} M
+                    </div>
+                  )}
+                </div>
+              )}
+              {missionHud.relay && (
+                <div className="mt-2 border-t border-slate-800/90 pt-2">
+                  <div className="flex justify-between font-mono text-[10px] text-cyan-200">
+                    <span>DEFEND · {missionHud.relay.callsign}</span>
+                    <span>{Math.ceil(missionHud.relay.currentIntegrity)} / {missionHud.relay.maxIntegrity}</span>
+                  </div>
+                  <div className="mt-1 h-1 bg-slate-800">
+                    <div className="h-full bg-cyan-400 transition-[width]" style={{ width: `${Math.max(0, missionHud.relay.currentIntegrity / missionHud.relay.maxIntegrity * 100)}%` }} />
+                  </div>
+                  <div className="mt-1 text-right font-mono text-[9px] tracking-wider text-cyan-300/80">
+                    {missionHud.relay.destroyed ? 'DEFENSE LINE BREACHED' : 'RELAY SECURE'}
+                  </div>
+                </div>
+              )}
               {missionHud.transport && (
                 <div className="mt-2 border-t border-slate-800/90 pt-2">
                   <div className="flex justify-between font-mono text-[10px] text-amber-200">
@@ -1021,6 +1069,12 @@ export function FlightHUD({
               <span>
                 <strong className="font-mono text-cyan-300">Shift</strong> Boost
               </span>
+              {missionHud?.interaction && (
+                <>
+                  <span className="text-slate-600" aria-hidden="true">·</span>
+                  <span><strong className="font-mono text-amber-300">Hold E</strong> Scan / Extract</span>
+                </>
+              )}
               <span className="text-slate-600" aria-hidden="true">·</span>
               <span>
                 <strong className="font-mono text-cyan-300">Esc</strong> Pause

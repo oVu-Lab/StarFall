@@ -32,6 +32,8 @@ test('transport extraction wins the mission exactly once', () => {
   const mission: typeof escortMission = {
     ...escortMission,
     waves: [],
+    objectives: escortMission.objectives.filter((objective) => objective.id === 'm6-escort'),
+    outcome: { ...escortMission.outcome, success: { mode: 'all', objectiveIds: ['m6-escort'] } },
     escort: { ...escortMission.escort!, route: [[0, 0, 0], [0, 0, -1]] },
   };
   const combat = new CombatManager(100);
@@ -75,7 +77,7 @@ test('transport survival affects score while non-escort scoring stays identical'
   assert.ok(safeTransport.survivalScore > damagedTransport.survivalScore);
 });
 
-test('original five missions retain their objectives and escort unlock follows mission five', () => {
+test('the campaign keeps five missions before Mission 06 and preserves its unlock edge', () => {
   const originalMissions = CAMPAIGN_MISSIONS.filter((mission) => mission.number <= 5);
   assert.equal(originalMissions.length, 5);
   assert.ok(originalMissions.every((mission) => mission.escort === undefined));

@@ -1,4 +1,4 @@
-import { CAMPAIGN_MISSIONS } from '../../config/missions';
+import { CAMPAIGN_MISSIONS, isMissionUnlockedInCatalog } from '../../config/missions';
 import type { MissionRank } from '../../types/game';
 import type {
   CampaignSaveData,
@@ -98,9 +98,10 @@ export function saveCampaignProgress(data: CampaignSaveData): void {
 }
 
 export function isMissionUnlocked(mission: MissionDefinition, save: CampaignSaveData): boolean {
-  if (!mission.unlockRequirementId) return true;
-  const reqRecord = save.missions[mission.unlockRequirementId];
-  return Boolean(reqRecord?.completed);
+  const completedMissionIds = new Set(
+    Object.entries(save.missions).filter(([, record]) => record.completed).map(([id]) => id),
+  );
+  return isMissionUnlockedInCatalog(mission.id, completedMissionIds);
 }
 
 export function recordMissionOutcome(

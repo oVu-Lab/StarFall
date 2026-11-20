@@ -17,6 +17,7 @@ export interface InputSnapshot {
   boost: boolean;
   firePrimary: boolean;
   missilePressed?: boolean;
+  interactHeld?: boolean;
   keyPitchUp: boolean;
   keyPitchDown: boolean;
   keyYawLeft: boolean;
@@ -113,6 +114,7 @@ export class InputManager {
     boost: false,
     firePrimary: false,
     missilePressed: false,
+    interactHeld: false,
     keyPitchUp: false,
     keyPitchDown: false,
     keyYawLeft: false,
@@ -370,6 +372,7 @@ export class InputManager {
     this.snapshot.boost = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
     this.snapshot.firePrimary = this.mouseFireHeld || this.keys.has('Space');
     this.snapshot.missilePressed = this.missileLaunchQueued;
+    this.snapshot.interactHeld = this.keys.has('KeyE');
     this.missileLaunchQueued = false;
     this.snapshot.keyPitchUp = keyPitchUp;
     this.snapshot.keyPitchDown = keyPitchDown;
@@ -436,12 +439,13 @@ export class InputManager {
       e.code === 'ShiftRight' ||
       e.code === 'Space' ||
       e.code === 'KeyM' ||
+      e.code === 'KeyE' ||
       e.code === 'ArrowUp' ||
       e.code === 'ArrowDown' ||
       e.code === 'ArrowLeft' ||
       e.code === 'ArrowRight'
     ) {
-      if (e.code === 'Space' || e.code === 'KeyM') e.preventDefault();
+      if (e.code === 'Space' || e.code === 'KeyM' || e.code === 'KeyE') e.preventDefault();
       this.keys.add(e.code);
     }
   };

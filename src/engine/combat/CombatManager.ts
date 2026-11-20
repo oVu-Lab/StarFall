@@ -13,6 +13,7 @@ import type {
   WeaponConfig,
   WeaponFireEvent,
   TransportEntity,
+  RelayEntity,
 } from '../../types/combat';
 import { DIFFICULTY_PROFILES } from '../../config/difficulty';
 import type { BotPersonality, FlightTelemetry } from '../../types/game';
@@ -30,6 +31,10 @@ export const PLAYER_COLLISION_RADIUS = 3.2;
 export const ENEMY_COLLISION_RADIUS = 3.6;
 export const MAX_ENEMIES = 6;
 export const TRANSPORT_ENTITY_ID = 'transport-1';
+
+export function shouldEnemyTargetRelay(personality: string, relayActive: boolean): boolean {
+  return relayActive && (personality === 'aggressor' || personality === 'defender');
+}
 
 export function shouldEnemyTargetTransport(
   personality: string,
@@ -83,6 +88,7 @@ const _rightVec = new THREE.Vector3();
 const _upVec = new THREE.Vector3();
 const _forwardVec = new THREE.Vector3();
 const _transportDelta = new THREE.Vector3();
+const _zeroVelocity = new THREE.Vector3();
 
 function projectShieldImpact(
   center: THREE.Vector3,
@@ -137,6 +143,7 @@ export class CombatManager {
   public readonly projectiles = new ProjectilePool(160);
   public readonly enemies: EnemyEntity[] = [];
   public transport: TransportEntity | null = null;
+  public relay: RelayEntity | null = null;
   public readonly playerHealth: HealthState;
   public readonly playerShield: ShieldState;
   public readonly stats: CombatStats = {
@@ -216,6 +223,7 @@ export class CombatManager {
     this.projectiles.clear();
     this.enemies.length = 0;
     this.transport = null;
+    this.relay = null;
     this.playerWeaponCooldown = 0;
     this.playerMuzzleIndex = 0;
     this.simTime = 0;
@@ -300,7 +308,9 @@ export class CombatManager {
         repositionPoint: spawnPos.clone(),
         hitFlashTimer: 0,
         muzzleFlashTimer: 0,
-        targetTransport: shouldEnemyTargetTransport(spec.personality, Boolean(this.transport?.active)),
+        targetTransport: !shouldEnemyTargetRelay(spec.personality, Boolean(this.relay?.active)) &&
+          shouldEnemyTargetTransport(spec.personality, Boolean(this.transport?.active)),
+        targetRelay: shouldEnemyTargetRelay(spec.personality, Boolean(this.relay?.active)),
         missileLockTimer: 0,
         missileCooldown: 8 + i * 5,
       };
@@ -376,6 +386,7 @@ export class CombatManager {
         hitFlashTimer: 0,
         muzzleFlashTimer: 0,
         targetTransport: false,
+        targetRelay: false,
         missileLockTimer: 0,
         missileCooldown: 8 + i * 5,
       };
@@ -401,8 +412,77 @@ export class CombatManager {
       route: points, routeIndex: 1, progress: points.length > 1 ? 0 : 1, hitFlashTimer: 0,
     };
     for (const enemy of this.enemies) {
-      enemy.targetTransport = shouldEnemyTargetTransport(enemy.personality, true);
+      enemy.targetTransport = !enemy.targetRelay && shouldEnemyTargetTransport(enemy.personality, true);
     }
+  }
+
+  public initializeRelay(
+    id: string,
+    callsign: string,
+    maxIntegrity: number,
+    offset: [number, number, number],
+    collisionRadius: number,
+    origin: THREE.Vector3,
+  ): void {
+    this.relay = {
+      id,
+      callsign,
+      active: true,
+      position: new THREE.Vector3(origin.x + offset[0], origin.y + offset[1], origin.z + offset[2]),
+      health: createHealthState(maxIntegrity),
+      collisionRadius,
+      hitFlashTimer: 0,
+    };
+    for (const enemy of this.enemies) {
+      enemy.targetRelay = shouldEnemyTargetRelay(enemy.personality, true);
+      if (enemy.targetRelay) enemy.targetTransport = false;
+    }
+  }
+
+  public applyRelayDamage(amount: number, attackerId: string, weaponId: string, hitPoint: THREE.Vector3): void {
+    const relay = this.relay;
+    if (!relay?.active || relay.health.isDestroyed) return;
+    const result = applyDamage(relay.health, amount, attackerId, this.simTime);
+    if (!result.applied) return;
+    relay.hitFlashTimer = 0.45;
+    this.callbacks.onDamage?.({
+      targetId: relay.id,
+      attackerId,
+      weaponId,
+      amount: result.appliedAmount,
+      remainingHealth: result.remaining,
+      maxHealth: relay.health.max,
+      destroyed: result.destroyedNow,
+      hitPoint,
+      timestamp: this.simTime,
+    });
+    if (result.destroyedNow) {
+      relay.active = false;
+      this.callbacks.onDestruction?.({
+        entityId: relay.id,
+        callsign: relay.callsign,
+        faction: 'neutral',
+        killerId: attackerId,
+        position: relay.position,
+        timestamp: this.simTime,
+      });
+      this.callbacks.onVfxBurst?.({ kind: 'explosion', position: relay.position, color: '#22d3ee', scale: 2.6 });
+    }
+  }
+
+  public getAimedEnemy(): EnemyEntity | null {
+    if (!this.primaryTargetId) return null;
+    return this.enemies.find((enemy) => enemy.id === this.primaryTargetId && enemy.active && !enemy.health.isDestroyed) ?? null;
+  }
+
+  public getEnemyByCallsign(callsign: string): EnemyEntity | null {
+    return this.enemies.find((enemy) => enemy.callsign === callsign && enemy.active && !enemy.health.isDestroyed) ?? null;
+  }
+
+  public clearMissionActors(): void {
+    this.enemies.length = 0;
+    this.transport = null;
+    this.relay = null;
   }
 
   public updateTransport(dt: number): void {
@@ -450,6 +530,9 @@ export class CombatManager {
   ): void {
     const safeDt = Math.min(Math.max(dt, 0.0001), 0.05);
     this.simTime += safeDt;
+    if (this.relay?.hitFlashTimer && this.relay.hitFlashTimer > 0) {
+      this.relay.hitFlashTimer = Math.max(0, this.relay.hitFlashTimer - safeDt);
+    }
 
     if (!this.playerHealth.isDestroyed) {
       const recharge = updateShieldRecharge(this.playerShield, safeDt, this.simTime);
@@ -506,16 +589,18 @@ export class CombatManager {
       const recharge = updateShieldRecharge(enemy.shield, safeDt, this.simTime);
       if (recharge.began) this.callbacks.onShieldRecharge?.(enemy.id, false);
 
+      const targetRelay = enemy.targetRelay && this.relay?.active && !this.relay.health.isDestroyed;
       const targetTransport = enemy.targetTransport && this.transport?.active && !this.transport.health.isDestroyed;
-      const targetPosition = targetTransport ? this.transport!.position : flight.position;
-      const targetVelocity = targetTransport ? this.transport!.velocity : flight.velocity;
+      const targetProtectedActor = targetRelay || targetTransport;
+      const targetPosition = targetRelay ? this.relay!.position : targetTransport ? this.transport!.position : flight.position;
+      const targetVelocity = targetRelay ? _zeroVelocity : targetTransport ? this.transport!.velocity : flight.velocity;
       const aiRes = this.ai.updateEnemy(
         enemy,
         safeDt,
         this.simTime,
         targetPosition,
         targetVelocity,
-        targetTransport ? true : playerAlive,
+        targetProtectedActor ? true : playerAlive,
         this.projectiles,
         this.enemies,
       );
@@ -531,7 +616,7 @@ export class CombatManager {
           timestamp: this.simTime,
         });
       }
-      this.updateEnemyMissile(enemy, targetTransport ? null : flight.position, playerAlive, safeDt);
+      this.updateEnemyMissile(enemy, targetProtectedActor ? null : flight.position, playerAlive, safeDt);
     }
 
     // 4. Swept Collision Detection (Projectiles vs Enemies & Player)
@@ -900,6 +985,25 @@ export class CombatManager {
       } else if (p.faction === 'enemy' && playerAlive) {
         // Enemy projectile -> check player ship (never damages own shooter)
         if (!canMissileDamageTarget(p.ownerId, p.isHomingMissile ? p.targetId : undefined, PLAYER_ENTITY_ID)) continue;
+
+        const relay = this.relay;
+        if (
+          relay?.active &&
+          !relay.health.isDestroyed &&
+          p.ownerId !== relay.id &&
+          intersectSegmentSphere(
+            p.prevPosition,
+            p.position,
+            relay.position,
+            relay.collisionRadius + p.hitRadius,
+            _hitPoint,
+          )
+        ) {
+          this.projectiles.release(p);
+          this.applyRelayDamage(p.damage, p.ownerId, p.weaponId, _hitPoint);
+          this.callbacks.onVfxBurst?.({ kind: 'impact', position: _hitPoint, color: '#22d3ee', scale: 1.25 });
+          continue;
+        }
 
         const transport = this.transport;
         if (

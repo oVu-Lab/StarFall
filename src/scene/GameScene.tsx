@@ -26,6 +26,7 @@ import { buildVanguardModel } from './vanguardModel';
 import { SpaceEnvironment } from './SpaceEnvironment';
 import { SpeedLinesVFX } from './SpeedLinesVFX';
 import { TransportRenderer } from './TransportRenderer';
+import { MissionActors } from './MissionActors';
 import {
   consumeShieldImpacts,
   createShieldField,
@@ -151,7 +152,7 @@ export function GameScene({
       onDestruction: (evt) => {
         const dist = flight.position.distanceTo(evt.position);
         AudioManager.playExplosion(dist);
-        missionManager.handleDestruction(evt, combat);
+        missionManager.handleDestruction(evt);
         if (evt.entityId === PLAYER_ENTITY_ID) {
           onPlayerDestroyed();
         }
@@ -275,7 +276,7 @@ export function GameScene({
       );
 
       // Advance mission objectives, wave triggers, and completion detection
-      missionManager.update(dt, combat, flight.position);
+      missionManager.update(dt, combat, flight.position, Boolean(snapshot.interactHeld));
 
       if (shipRootRef.current) {
         shipRootRef.current.visible = playerAlive;
@@ -383,6 +384,8 @@ export function GameScene({
       />
 
       <TransportRenderer combat={combat} visible={combatVisible} />
+
+      <MissionActors combat={combat} missionManager={missionManager} visible={combatVisible} />
 
       <CombatVFX
         ref={vfxRef}

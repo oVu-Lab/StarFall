@@ -153,6 +153,7 @@ export interface EnemyEntity {
   hitFlashTimer: number;
   muzzleFlashTimer: number;
   targetTransport: boolean;
+  targetRelay: boolean;
   missileLockTimer?: number;
   missileCooldown?: number;
 }
@@ -168,6 +169,16 @@ export interface TransportEntity {
   route: THREE.Vector3[];
   routeIndex: number;
   progress: number;
+  hitFlashTimer: number;
+}
+
+export interface RelayEntity {
+  id: string;
+  callsign: string;
+  active: boolean;
+  position: THREE.Vector3;
+  health: HealthState;
+  collisionRadius: number;
   hitFlashTimer: number;
 }
 
