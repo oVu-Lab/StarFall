@@ -11,10 +11,10 @@ import { MissionManager } from '../src/engine/mission/MissionManager';
 import { CombatManager } from '../src/engine/combat/CombatManager';
 import * as THREE from 'three';
 
-test('all six campaign definitions pass catalog validation', () => {
+test('all ten campaign definitions pass catalog validation', () => {
   assert.deepEqual(validateMissionCatalog(), []);
   assert.deepEqual(CAMPAIGN_MISSIONS.map((mission) => mission.id), [
-    'mission-01', 'mission-02', 'mission-03', 'mission-04', 'mission-05', 'mission-06',
+    'mission-01', 'mission-02', 'mission-03', 'mission-04', 'mission-05', 'mission-06', 'mission-07', 'mission-08', 'mission-09', 'mission-10',
   ]);
 });
 
@@ -46,15 +46,21 @@ test('catalog validation rejects dangling objective references and dependency cy
   assert.ok(validateMissionCatalog([unknownTarget]).some((error) => error.includes('unknown target callsign')));
 });
 
-test('campaign progression is explicit and preserves Mission 06 behind Mission 05', () => {
+test('campaign progression preserves the original six and extends through the finale', () => {
   for (const mission of CAMPAIGN_MISSIONS.slice(0, -1)) {
     assert.equal(getNextMission(mission.id)?.id, mission.nextMissionId);
     assert.equal(getMissionById(mission.nextMissionId!).unlockRequirementId, mission.id);
   }
   assert.equal(getMissionById('mission-06').unlockRequirementId, 'mission-05');
-  assert.equal(getNextMission('mission-06'), null);
+  assert.equal(getNextMission('mission-06')?.id, 'mission-07');
   assert.equal(isMissionUnlockedInCatalog('mission-06', new Set(['mission-04'])), false);
   assert.equal(isMissionUnlockedInCatalog('mission-06', new Set(['mission-05'])), true);
+  assert.equal(isMissionUnlockedInCatalog('mission-07', new Set(['mission-05'])), false);
+  assert.equal(isMissionUnlockedInCatalog('mission-07', new Set(['mission-06'])), true);
+  assert.equal(CAMPAIGN_MISSIONS[6].objectives.some((objective) => objective.type === 'recon'), true);
+  assert.equal(CAMPAIGN_MISSIONS[7].objectives.some((objective) => objective.type === 'defend'), true);
+  assert.equal(CAMPAIGN_MISSIONS[8].waves.length, 3);
+  assert.equal(CAMPAIGN_MISSIONS[9].objectives.some((objective) => objective.type === 'extract'), true);
 });
 
 test('campaign missions have distinct objective profiles and explicit outcomes', () => {

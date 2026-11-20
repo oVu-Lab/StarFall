@@ -3,11 +3,12 @@ import type { ShipId } from '../types/game';
 import type { CampaignCollectionState, CampaignSaveData } from '../types/mission';
 
 export interface ShipCatalogItem {
-  id: ShipId; name: string; description: string; price: number; unlockRequirement: string;
+  id: ShipId; name: string; description: string; price: number; unlockRequirement: string; achievementRequirement?: string;
 }
 export interface SkinCatalogItem {
   id: string; name: string; description: string; price: number; shipId: ShipId;
   colors: Partial<typeof SHIP_CONFIGS.interceptor.colors>;
+  achievementRequirement?: string;
 }
 
 export const SHIP_CATALOG: ShipCatalogItem[] = [
@@ -22,6 +23,7 @@ export const SKIN_CATALOG: SkinCatalogItem[] = [
   { id: 'striker:arctic', name: 'Arctic Patrol', description: 'Pale alloy with ice blue details.', price: 280, shipId: 'striker', colors: { hullPrimary: '#bfdbfe', hullSecondary: '#334155', hullTrim: '#67e8f9', engineGlow: '#22d3ee', engineCore: '#ecfeff' } },
   { id: 'destroyer:default', name: 'Aegis Standard', description: 'Dark fleet armor with blue reactor light.', price: 180, shipId: 'destroyer', colors: {} },
   { id: 'destroyer:crimson', name: 'Crimson Guard', description: 'Deep red armor with scarlet reactor light.', price: 320, shipId: 'destroyer', colors: { hullPrimary: '#7f1d1d', hullSecondary: '#1c1018', hullTrim: '#f87171', engineGlow: '#ef4444', engineCore: '#ffe4e6' } },
+  { id: 'interceptor:stellar', name: 'Stellar Crown', description: 'Ceremonial livery for campaign aces.', price: 0, shipId: 'interceptor', achievementRequirement: 'achievement:campaign-ace', colors: { hullPrimary: '#1e3a8a', hullSecondary: '#0f172a', hullTrim: '#facc15', engineGlow: '#38bdf8', engineCore: '#fff7cc' } },
 ];
 export const STARTER_COLLECTION: CampaignCollectionState = {
   ownedShipIds: ['interceptor'], ownedSkinIds: ['interceptor:default'], selectedShipId: 'interceptor', selectedSkinByShip: { interceptor: 'interceptor:default' },
@@ -52,6 +54,8 @@ export function purchaseCollectionItem(save: CampaignSaveData, kind: 'ship' | 's
   const collection = normalizeCollection(save.collection);
   const item = kind === 'ship' ? getShipCatalogItem(id) : getSkinCatalogItem(id);
   if (!item || (kind === 'skin' && !collection.ownedShipIds.includes((item as SkinCatalogItem).shipId))) return { ok: false, save, message: 'That item is unavailable.' };
+  const achievementRequirement = item.achievementRequirement;
+  if (achievementRequirement && !save.rewards?.unlockedAchievementIds.includes(achievementRequirement)) return { ok: false, save, message: `Unlock ${achievementRequirement.replace('achievement:', '')} first.` };
   const owned = kind === 'ship' ? collection.ownedShipIds : collection.ownedSkinIds;
   if (owned.includes(id)) return { ok: false, save, message: 'You already own this item.' };
   const credits = save.rewards?.credits ?? 0;

@@ -44,11 +44,11 @@ export function TransportRenderer({ combat, visible }: { combat: CombatManager; 
     <group ref={rootRef} name="friendly-transport" visible={false}>
       <group ref={shipRootRef}>
         <primitive object={handle.group} />
-        <Html position={[0, 17, 0]} center distanceFactor={100}>
+        {visible && combat.transport?.active && <Html position={[0, 17, 0]} center distanceFactor={100}>
           <div className="whitespace-nowrap border border-amber-400/70 bg-[#090f1b]/90 px-2 py-1 font-mono text-[10px] font-semibold tracking-wider text-amber-200">
             FRIENDLY · {combat.transport?.callsign ?? 'TRANSPORT'}
           </div>
-        </Html>
+        </Html>}
       </group>
       <mesh name="transport-escort-ring" geometry={ring}>
         <meshBasicMaterial color="#fbbf24" transparent opacity={0.5} side={THREE.DoubleSide} depthWrite={false} />

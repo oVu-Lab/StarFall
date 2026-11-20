@@ -54,11 +54,9 @@ export function MissionActors({
         <mesh geometry={ring} rotation={[Math.PI / 2, 0, 0]}>
           <meshBasicMaterial color="#22d3ee" transparent opacity={0.58} side={THREE.DoubleSide} depthWrite={false} />
         </mesh>
-        <Html position={[0, 27, 0]} center distanceFactor={120}>
-          <div className="whitespace-nowrap border border-cyan-400/70 bg-[#06121c]/90 px-2 py-1 font-mono text-[10px] font-semibold tracking-wider text-cyan-200">
-            COBALT RELAY
-          </div>
-        </Html>
+        {visible && <Html position={[0, 27, 0]} center distanceFactor={120}>
+          <div className="whitespace-nowrap border border-cyan-400/70 bg-[#06121c]/90 px-2 py-1 font-mono text-[10px] font-semibold tracking-wider text-cyan-200">COBALT RELAY</div>
+        </Html>}
       </group>
 
       <group ref={extractionRef} visible={false}>
@@ -69,11 +67,9 @@ export function MissionActors({
         <mesh name="extraction-ring" geometry={beaconRing} rotation={[Math.PI / 2, 0, 0]}>
           <meshBasicMaterial color="#fbbf24" transparent opacity={0.72} side={THREE.DoubleSide} depthWrite={false} />
         </mesh>
-        <Html position={[0, 24, 0]} center distanceFactor={100}>
-          <div className="whitespace-nowrap border border-amber-400/75 bg-[#171205]/90 px-2 py-1 font-mono text-[10px] font-semibold tracking-wider text-amber-200">
-            EXTRACTION BEACON
-          </div>
-        </Html>
+        {visible && <Html position={[0, 24, 0]} center distanceFactor={100}>
+          <div className="whitespace-nowrap border border-amber-400/75 bg-[#171205]/90 px-2 py-1 font-mono text-[10px] font-semibold tracking-wider text-amber-200">EXTRACTION BEACON</div>
+        </Html>}
       </group>
     </>
   );

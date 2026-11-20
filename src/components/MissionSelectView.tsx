@@ -119,6 +119,8 @@ export function MissionSelectView({
                   <div className="mt-1 flex items-center gap-2 font-mono text-[11px] text-slate-400">
                     <span>{diffLabel}</span>
                     <span aria-hidden="true">·</span>
+                    <span className={record?.completed ? 'text-emerald-300' : unlocked ? 'text-cyan-300' : 'text-slate-500'}>{record?.completed ? 'COMPLETED' : unlocked ? 'AVAILABLE' : 'LOCKED'}</span>
+                    <span aria-hidden="true">·</span>
                     <span>{mission.environment.sectorName}</span>
                     <span aria-hidden="true">·</span>
                     <span>{mission.totalEnemyCount} Hostiles</span>

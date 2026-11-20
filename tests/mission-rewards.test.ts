@@ -4,6 +4,7 @@ import type { MissionResult } from '../src/types/mission';
 import { applyMissionRewards, calculateMissionRewards } from '../src/engine/mission/CampaignRewards';
 import { createDefaultCampaignSave } from '../src/engine/mission/CampaignProgressStore';
 import { calculateMissionScore, rankForScore } from '../src/engine/mission/RankCalculator';
+import { purchaseCollectionItem } from '../src/config/collection';
 
 function result(overrides: Partial<MissionResult> = {}): MissionResult {
   return {
@@ -34,7 +35,7 @@ test('failed missions pay nothing; first clear, rank differential and optional r
   const failed = calculateMissionRewards(result({ status: 'failed', rank: null }), save);
   assert.equal(failed.creditsEarned, 0);
   const first = applyMissionRewards(result({ rank: 'B', completedObjectiveIds: ['scan-relay'], optionalObjectiveIds: ['scan-relay'] }), save);
-  assert.equal(first.summary.creditsEarned, 235); // first clear + B rank + optional
+  assert.equal(first.summary.creditsEarned, 310); // first clear + B rank + optional + Bonus Hunter
   const replay = applyMissionRewards(result({ rank: 'B', completedObjectiveIds: ['scan-relay'], optionalObjectiveIds: ['scan-relay'] }), first.nextSave);
   assert.equal(replay.summary.creditsEarned, 0);
   const lower = applyMissionRewards(result({ rank: 'C' }), first.nextSave);
@@ -55,4 +56,18 @@ test('achievement grants and duplicate ledger entries are one-time; progress rec
   const replay = applyMissionRewards(ace, duplicatedState);
   assert.equal(replay.summary.creditsEarned, 0);
   assert.deepEqual(replay.nextSave.missions['mission-02'], save.missions['mission-02']);
+});
+
+test('new campaign and performance achievements unlock once and gate the ace skin', () => {
+  const save = createDefaultCampaignSave();
+  const aceResult = result({ missionId: 'mission-10', rank: 'S', completedObjectiveIds: ['cache'], optionalObjectiveIds: ['cache'] });
+  const paid = applyMissionRewards(aceResult, save);
+  assert.deepEqual(paid.summary.achievementRewards.map((achievement) => achievement.id), [
+    'achievement:silent-professional', 'achievement:campaign-ace', 'achievement:bonus-hunter',
+  ]);
+  const gated = purchaseCollectionItem(paid.nextSave, 'skin', 'interceptor:stellar');
+  assert.equal(gated.ok, true);
+  const replay = applyMissionRewards(aceResult, paid.nextSave);
+  assert.equal(replay.summary.achievementRewards.length, 0);
+  assert.equal(replay.summary.creditsEarned, 0);
 });
