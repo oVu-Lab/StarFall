@@ -7,8 +7,19 @@ import type { CombatManager, VfxBurstEvent } from '../engine/combat/CombatManage
 import { MAX_POOLED_PROJECTILES } from '../engine/combat/ProjectilePool';
 import type { FlightTelemetry } from '../types/game';
 
+/**
+ * Optional anchor that pins a burst to a moving shield: positions/normals are expressed in the shield
+ * mesh's local space and re-projected every frame via `updateAnchored`.
+ */
+export interface VfxAnchor {
+  localPosition: THREE.Vector3;
+  localNormal: THREE.Vector3;
+}
+
 export interface CombatVFXHandle {
-  spawnBurst: (evt: VfxBurstEvent) => void;
+  spawnBurst: (evt: VfxBurstEvent, anchor?: VfxAnchor) => void;
+  /** Re-project anchored bursts using the shield's *current* world matrix (call after the ship transform is updated). */
+  updateAnchored: (shieldWorldMatrix: THREE.Matrix4) => void;
   clear: () => void;
 }
 
@@ -32,6 +43,10 @@ interface SparkParticle {
   stretchFactor: number;
   drag: number;
   color: THREE.Color;
+  /** Anchored sparks live in shield-local space (position/velocity) and ride with the ship. */
+  anchored: boolean;
+  renderWidth: number;
+  renderLength: number;
 }
 
 interface ShockwaveSlot {
@@ -47,6 +62,9 @@ interface ShockwaveSlot {
   isShieldBreak: boolean;
   isHullImpact: boolean;
   rollAngle: number;
+  anchored: boolean;
+  localPos: THREE.Vector3;
+  localNormal: THREE.Vector3;
 }
 
 interface ShockMeshSlot {
@@ -73,6 +91,19 @@ const _tangentA = new THREE.Vector3();
 const _tangentB = new THREE.Vector3();
 const _refAxis = new THREE.Vector3();
 const _velDir = new THREE.Vector3();
+const _basisNormal = new THREE.Vector3();
+const _anchorPos = new THREE.Vector3();
+const _anchorNormal = new THREE.Vector3();
+
+// Precomputed warm hull-spark palette (avoids per-spark string colour parsing)
+const HULL_SPARK_COLORS: readonly THREE.Color[] = [
+  new THREE.Color('#fff4d6'),
+  new THREE.Color('#ffd27a'),
+  new THREE.Color('#ffa63d'),
+  new THREE.Color('#ff7a1a'),
+  new THREE.Color('#fff4d6'),
+  new THREE.Color('#e8892c'),
+];
 
 // =============================================================================
 // CUSTOM PROCEDURAL GEOMETRIES FOR PULSE CANNON PROJECTILES & SPARKS
@@ -137,12 +168,15 @@ export function createSparkStreakGeometry(): THREE.BufferGeometry {
 // =============================================================================
 
 const INSTANCED_BOLT_VERTEX = /* glsl */ `
+  uniform vec2 uAxial; // x = scale, y = bias mapping geometry local y -> 0..1 (rear -> nose)
+  varying float vAxial;
   varying vec2 vUv;
   varying vec3 vNormalView;
   varying vec3 vViewDir;
 
   void main() {
     vUv = uv;
+    vAxial = clamp(position.y * uAxial.x + uAxial.y, 0.0, 1.0);
     #ifdef USE_INSTANCING
       vec4 mvPosition = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
       vec3 c0 = instanceMatrix[0].xyz;
@@ -170,79 +204,75 @@ const INSTANCED_BOLT_VERTEX = /* glsl */ `
 `;
 
 const PULSE_CORE_FRAGMENT = /* glsl */ `
-  varying vec2 vUv;
+  varying float vAxial;
   varying vec3 vNormalView;
   varying vec3 vViewDir;
 
   void main() {
-    // vUv.y = 0 at rear tip, 1 at leading nose tip
-    float axial = vUv.y;
+    float axial = vAxial; // 0 = rear tip, 1 = nose
     float facing = abs(dot(normalize(vNormalView), normalize(vViewDir)));
-    float centerBoost = pow(facing, 0.65);
 
-    // Concentrated white-hot leading body with crisp cyan-white rear taper
-    float leadHeat = smoothstep(0.12, 0.86, axial);
-    float tailSoft = smoothstep(0.0, 0.16, axial);
+    // White-hot spine fading to cyan only at the silhouette edge
+    float hot = smoothstep(0.10, 0.70, facing);
+    vec3 edgeCyan = vec3(0.30, 0.82, 1.0);
+    vec3 white = vec3(0.96, 0.99, 1.0);
+    vec3 col = mix(edgeCyan, white, hot);
+    // Nose is the hottest point of the projectile
+    col = mix(col, vec3(1.0), smoothstep(0.55, 1.0, axial) * 0.55);
 
-    vec3 rearCyan = vec3(0.46, 0.90, 1.0);
-    vec3 coreWhite = vec3(0.98, 0.996, 1.0);
-    vec3 col = mix(rearCyan, coreWhite, clamp(leadHeat * 0.55 + centerBoost * 0.62, 0.0, 1.0));
-
-    float alpha = tailSoft * (0.78 + 0.22 * centerBoost);
-    gl_FragColor = vec4(col * (1.75 + leadHeat * 0.65), alpha);
+    float tail = smoothstep(0.0, 0.30, axial);
+    float alpha = tail * (0.82 + 0.18 * hot);
+    gl_FragColor = vec4(col * (1.9 + axial * 0.7), alpha);
   }
 `;
 
 const PULSE_GLOW_FRAGMENT = /* glsl */ `
   uniform float uGlowIntensity;
 
-  varying vec2 vUv;
+  varying float vAxial;
   varying vec3 vNormalView;
   varying vec3 vViewDir;
 
   void main() {
-    float axial = vUv.y;
+    float axial = vAxial;
     float facing = abs(dot(normalize(vNormalView), normalize(vViewDir)));
-    // Soft Fresnel-like radial falloff eliminates any hard cylinder silhouette
-    float radialSoft = pow(facing, 1.75);
-    float endSoft = smoothstep(0.0, 0.22, axial) * smoothstep(1.0, 0.78, axial);
+    // Smooth gaussian-like sheath: dense near the core axis, no hard silhouette
+    float radial = exp(-pow(1.0 - facing, 2.0) * 3.4);
+    float endSoft = smoothstep(0.0, 0.40, axial) * smoothstep(1.0, 0.82, axial);
 
-    vec3 deepBlue = vec3(0.04, 0.52, 0.94);
-    vec3 electricCyan = vec3(0.32, 0.86, 1.0);
-    vec3 innerTint = vec3(0.84, 0.97, 1.0);
+    vec3 deepBlue = vec3(0.05, 0.42, 0.95);
+    vec3 cyan = vec3(0.26, 0.82, 1.0);
+    vec3 col = mix(deepBlue, cyan, clamp(radial * 1.1, 0.0, 1.0));
+    col = mix(col, vec3(0.80, 0.96, 1.0), pow(facing, 4.0) * 0.55);
 
-    vec3 col = mix(deepBlue, electricCyan, clamp(radialSoft * 1.15, 0.0, 1.0));
-    col = mix(col, innerTint, clamp(pow(facing, 3.0) * smoothstep(0.25, 0.85, axial) * 0.75, 0.0, 1.0));
-
-    float alpha = radialSoft * endSoft * 0.78 * uGlowIntensity;
+    float alpha = radial * endSoft * 0.80 * uGlowIntensity;
     if (alpha < 0.004) discard;
-    gl_FragColor = vec4(col * 1.75, alpha);
+    gl_FragColor = vec4(col * 1.7, alpha);
   }
 `;
 
 const PULSE_TRAIL_FRAGMENT = /* glsl */ `
   uniform float uGlowIntensity;
 
-  varying vec2 vUv;
+  varying float vAxial;
   varying vec3 vNormalView;
   varying vec3 vViewDir;
 
   void main() {
-    // vUv.y = 0 at far tail tip, 1 at bolt junction
-    float axial = vUv.y;
+    float axial = vAxial; // 0 = far tail tip, 1 = junction with bolt rear
     float facing = abs(dot(normalize(vNormalView), normalize(vViewDir)));
-    float radialSoft = pow(facing, 1.25);
+    float radial = exp(-pow(1.0 - facing, 2.0) * 2.6);
 
-    // Clean short taper: brightest right behind bolt, smoothly vanishing with zero hard cutoff
-    float axialFade = pow(clamp(axial, 0.0, 1.0), 1.75) * smoothstep(1.0, 0.90, axial);
-
-    vec3 tailBlue = vec3(0.06, 0.50, 0.92);
-    vec3 headCyan = vec3(0.56, 0.94, 1.0);
+    // Brightest at the junction (matches glow sheath colour), tapering to nothing at the tip
+    float fade = pow(axial, 1.5);
+    vec3 tailBlue = vec3(0.04, 0.40, 0.90);
+    vec3 headCyan = vec3(0.30, 0.84, 1.0);
     vec3 col = mix(tailBlue, headCyan, axial);
+    col = mix(col, vec3(0.85, 0.97, 1.0), pow(facing, 3.0) * axial * 0.6);
 
-    float alpha = axialFade * radialSoft * 0.68 * uGlowIntensity;
+    float alpha = fade * radial * 0.78 * uGlowIntensity;
     if (alpha < 0.004) discard;
-    gl_FragColor = vec4(col * 1.55, alpha);
+    gl_FragColor = vec4(col * 1.7, alpha);
   }
 `;
 
@@ -289,20 +319,21 @@ const IMPACT_RING_FRAGMENT = /* glsl */ `
       if (alpha < 0.005) discard;
       gl_FragColor = vec4(col * 1.65, clamp(alpha, 0.0, 1.0));
     } else if (uMode < 1.5) {
-      // HULL ARMOR STRIKE: compact high-contrast thermal breach flash + jagged directional flare
-      float flashCore = exp(-r * r * 8.5) * pow(1.0 - uProgress, 1.4);
-      float ringPos = 0.16 + uProgress * 0.68;
-      float ring = exp(-pow((r - ringPos) / 0.085, 2.0)) * (0.65 + 0.35 * sin(angle * 8.0 + 1.2));
-      // Brief 4-spike armor spark cross at entry point
-      float crossFlare = (exp(-abs(p.y) * 14.0) * exp(-abs(p.x) * 3.8) +
-                          exp(-abs(p.x) * 14.0) * exp(-abs(p.y) * 3.8)) * pow(1.0 - uProgress, 2.0) * 0.75;
-      float mask = smoothstep(1.0, 0.62, r);
+      // HULL ARMOR STRIKE: sharp white-orange flash, jagged radial rays, thin hot shock ring
+      float inv = 1.0 - uProgress;
+      float flashCore = exp(-r * r * 16.0) * pow(inv, 1.1);
+      float ringPos = 0.10 + uProgress * 0.78;
+      float ring = exp(-pow((r - ringPos) / 0.045, 2.0)) * pow(inv, 0.9);
+      float rays = pow(abs(cos(angle * 4.0 + 0.6)), 22.0) * 0.8 +
+                   pow(abs(cos(angle * 7.0 + 2.1)), 36.0) * 0.55;
+      float rayEnergy = rays * exp(-r * 2.4) * pow(inv, 1.4) * smoothstep(1.0, 0.45, r);
+      float mask = smoothstep(1.0, 0.70, r);
 
-      float energy = (flashCore * 1.2 + ring * 0.72 + crossFlare) * mask;
-      vec3 col = mix(uColorOuter, uColorInner, clamp(flashCore * 1.1 + crossFlare * 0.7, 0.0, 1.0));
+      float energy = (flashCore * 1.6 + ring * 0.65 + rayEnergy * 1.15) * mask;
+      vec3 col = mix(uColorOuter, uColorInner, clamp(flashCore * 1.3 + rayEnergy * 0.5, 0.0, 1.0));
       float alpha = energy * uOpacity;
       if (alpha < 0.005) discard;
-      gl_FragColor = vec4(col * 1.75, clamp(alpha, 0.0, 1.0));
+      gl_FragColor = vec4(col * 1.8, clamp(alpha, 0.0, 1.0));
     } else {
       // EXPLOSION / GENERIC SHOCKWAVE
       float wavePos = 0.25 + uProgress * 0.68;
@@ -351,6 +382,7 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
     const pulseCoreMat = useMemo(
       () =>
         new THREE.ShaderMaterial({
+          uniforms: { uAxial: { value: new THREE.Vector2(1, 0.5) } },
           vertexShader: INSTANCED_BOLT_VERTEX,
           fragmentShader: PULSE_CORE_FRAGMENT,
           transparent: true,
@@ -366,6 +398,7 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
         new THREE.ShaderMaterial({
           uniforms: {
             uGlowIntensity: { value: 1.0 },
+            uAxial: { value: new THREE.Vector2(1 / 1.1, 0.56 / 1.1) },
           },
           vertexShader: INSTANCED_BOLT_VERTEX,
           fragmentShader: PULSE_GLOW_FRAGMENT,
@@ -382,6 +415,7 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
         new THREE.ShaderMaterial({
           uniforms: {
             uGlowIntensity: { value: 1.0 },
+            uAxial: { value: new THREE.Vector2(1, 1) },
           },
           vertexShader: INSTANCED_BOLT_VERTEX,
           fragmentShader: PULSE_TRAIL_FRAGMENT,
@@ -482,6 +516,9 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
           stretchFactor: 1.5,
           drag: 2.2,
           color: new THREE.Color('#38bdf8'),
+          anchored: false,
+          renderWidth: 0,
+          renderLength: 0,
         });
       }
       return arr;
@@ -504,6 +541,9 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
           isShieldBreak: false,
           isHullImpact: false,
           rollAngle: 0,
+          anchored: false,
+          localPos: new THREE.Vector3(),
+          localNormal: new THREE.Vector3(0, 0, 1),
         });
       }
       return arr;
@@ -629,13 +669,14 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
     useImperativeHandle(
       ref,
       () => ({
-        spawnBurst: (evt: VfxBurstEvent) => {
+        spawnBurst: (evt: VfxBurstEvent, anchor?: VfxAnchor) => {
           const gfx = graphicsRef.current;
           const isExplosion = evt.kind === 'explosion';
           const isShield = evt.kind === 'shield-hit' || evt.kind === 'shield-break';
           const isShieldBreak = evt.kind === 'shield-break';
           const isPlayerHit = evt.kind === 'player-hit';
           const isHullImpact = evt.kind === 'impact';
+          const anchored = !!anchor && isShield;
 
           const baseCount = isExplosion
             ? 30
@@ -644,7 +685,7 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
               : isShield
                 ? 10
                 : isHullImpact
-                  ? 11
+                  ? 14
                   : 8;
           const sparkCount = Math.max(4, Math.round(baseCount * gfx.sparkScaleFactor));
           const sparkPoolLimit = Math.min(MAX_SPARK_POOL, gfx.maxSparkParticles);
@@ -658,10 +699,13 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
           }
 
           // Orthonormal tangent basis for shield skimming & hull ricochet cones
-          if (Math.abs(_impactNormal.y) < 0.92) _refAxis.set(0, 1, 0);
+          // Sparks of anchored bursts simulate in shield-local space, so build their basis there.
+          if (anchored) _basisNormal.copy(anchor!.localNormal).normalize();
+          else _basisNormal.copy(_impactNormal);
+          if (Math.abs(_basisNormal.y) < 0.92) _refAxis.set(0, 1, 0);
           else _refAxis.set(1, 0, 0);
-          _tangentA.crossVectors(_refAxis, _impactNormal).normalize();
-          _tangentB.crossVectors(_impactNormal, _tangentA).normalize();
+          _tangentA.crossVectors(_refAxis, _basisNormal).normalize();
+          _tangentB.crossVectors(_basisNormal, _tangentA).normalize();
 
           const swIdx = shockCursor.current % shockPoolLimit;
           shockCursor.current += 1;
@@ -676,6 +720,11 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
           sw.isShieldBreak = isShieldBreak;
           sw.isHullImpact = isHullImpact;
           sw.rollAngle = (shockCursor.current * 1.17) % (Math.PI * 2);
+          sw.anchored = anchored;
+          if (anchored) {
+            sw.localPos.copy(anchor!.localPosition);
+            sw.localNormal.copy(_basisNormal);
+          }
 
           if (isExplosion) {
             sw.maxAge = 0.66;
@@ -711,10 +760,10 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
           } else if (isHullImpact) {
             // Distinct localized armor strike: incandescent white-gold core + molten amber/cyan rim
             meshSlot.ringMat.uniforms.uMode.value = 1.0;
-            meshSlot.ringMat.uniforms.uColorInner.value.set('#fffbeb');
-            meshSlot.ringMat.uniforms.uColorOuter.value.set(evt.color === '#fb923c' ? '#f97316' : '#fbbf24');
-            meshSlot.coreMat.color.set('#fff7ed');
-            meshSlot.flashMat.color.set('#fdba74');
+            meshSlot.ringMat.uniforms.uColorInner.value.set('#fff1d0');
+            meshSlot.ringMat.uniforms.uColorOuter.value.set('#ff7a1a');
+            meshSlot.coreMat.color.set('#ffe9c4');
+            meshSlot.flashMat.color.set('#ffa040');
           } else if (isPlayerHit) {
             meshSlot.ringMat.uniforms.uMode.value = 1.0;
             meshSlot.ringMat.uniforms.uColorInner.value.set('#fff7ed');
@@ -734,7 +783,9 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
             const p = particles[sparkCursor.current % sparkPoolLimit];
             sparkCursor.current += 1;
             p.active = true;
-            p.position.copy(evt.position);
+            p.anchored = anchored;
+            if (anchored) p.position.copy(anchor!.localPosition);
+            else p.position.copy(evt.position);
             p.age = 0;
 
             if (isShield) {
@@ -748,7 +799,7 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
                 .set(0, 0, 0)
                 .addScaledVector(_tangentA, cosA * tangentialSpeed)
                 .addScaledVector(_tangentB, sinA * tangentialSpeed)
-                .addScaledVector(_impactNormal, outwardLift);
+                .addScaledVector(_basisNormal, outwardLift);
 
               p.maxAge = isShieldBreak
                 ? 0.24 + Math.random() * 0.20
@@ -758,32 +809,24 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
               p.drag = 4.2;
               p.color.set(i % 3 === 0 ? '#ffffff' : i % 2 === 0 ? '#bae6fd' : '#38bdf8');
             } else if (isHullImpact) {
-              // Directional armor-piercing sparks ejecting in a tight cone around the outward hull normal
+              // Directional armor sparks: tight cone around the outward hull normal, fast and short-lived
               const angle = Math.random() * Math.PI * 2;
-              const spread = 0.22 + Math.random() * 0.92;
-              const speed = 22 + Math.random() * 44;
-              const normalWeight = Math.cos(spread * 0.85);
-              const tanWeight = Math.sin(spread * 0.85);
+              const spread = 0.12 + Math.random() * 0.70;
+              const speed = 30 + Math.random() * 58;
+              const normalWeight = Math.cos(spread);
+              const tanWeight = Math.sin(spread);
               p.velocity
                 .set(0, 0, 0)
                 .addScaledVector(_impactNormal, normalWeight * speed)
                 .addScaledVector(_tangentA, Math.cos(angle) * tanWeight * speed)
                 .addScaledVector(_tangentB, Math.sin(angle) * tanWeight * speed);
 
-              p.maxAge = 0.18 + Math.random() * 0.20;
-              p.size = 0.42 + Math.random() * 0.46;
-              p.stretchFactor = 2.1;
-              p.drag = 2.8;
-              // Mostly incandescent molten gold/amber/orange armor sparks + 2 fast blue-white pulse plasma motes
-              if (i < 2) {
-                p.color.set('#e0f2fe');
-              } else if (i % 3 === 0) {
-                p.color.set('#fffbeb');
-              } else if (i % 2 === 0) {
-                p.color.set('#fbbf24');
-              } else {
-                p.color.set('#f97316');
-              }
+              p.maxAge = 0.14 + Math.random() * 0.18;
+              p.size = 0.40 + Math.random() * 0.42;
+              p.stretchFactor = 2.6;
+              p.drag = 3.2;
+              // Warm palette only: white-hot, gold, amber, deep orange (no blue)
+              p.color.copy(HULL_SPARK_COLORS[i % HULL_SPARK_COLORS.length]);
             } else if (isPlayerHit) {
               const u = Math.random() * 2 - 1;
               const theta = Math.random() * Math.PI * 2;
@@ -810,6 +853,41 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
             }
           }
         },
+        updateAnchored: (m: THREE.Matrix4) => {
+          const sMesh = sparksRef.current;
+          for (let i = 0; i < MAX_SHOCKWAVE_POOL; i++) {
+            const sw = shockwaves[i];
+            if (!sw.active || !sw.anchored) continue;
+            const slot = shockMeshes[i];
+            slot.group.position.copy(sw.localPos).applyMatrix4(m);
+            _anchorNormal.copy(sw.localNormal).transformDirection(m);
+            _quat.setFromUnitVectors(_ringNormal, _anchorNormal);
+            _rollQuat.setFromAxisAngle(_anchorNormal, sw.rollAngle);
+            slot.ring.quaternion.copy(_rollQuat).multiply(_quat);
+            slot.arcs.quaternion.copy(slot.ring.quaternion);
+          }
+          if (!sMesh) return;
+          let touched = false;
+          for (let i = 0; i < MAX_SPARK_POOL; i++) {
+            const p = particles[i];
+            if (!p.active || !p.anchored) continue;
+            _anchorPos.copy(p.position).applyMatrix4(m);
+            _dummy.position.copy(_anchorPos);
+            const speed = p.velocity.length();
+            if (speed > 0.01) {
+              _velDir.copy(p.velocity).transformDirection(m);
+              _quat.setFromUnitVectors(_upVec, _velDir);
+              _dummy.quaternion.copy(_quat);
+            } else {
+              _dummy.quaternion.identity();
+            }
+            _dummy.scale.set(p.renderWidth, p.renderLength, p.renderWidth);
+            _dummy.updateMatrix();
+            sMesh.setMatrixAt(i, _dummy.matrix);
+            touched = true;
+          }
+          if (touched) sMesh.instanceMatrix.needsUpdate = true;
+        },
         clear: () => {
           for (let i = 0; i < particles.length; i++) particles[i].active = false;
           for (let i = 0; i < shockwaves.length; i++) {
@@ -833,7 +911,7 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
       if (!pCoreMesh || !pGlowMesh || !pTrailMesh || !eMesh || !sMesh || !mMesh || !mtMesh) return;
 
       const gfx = graphicsRef.current;
-      const glowStrength = gfx.postGlowEnabled ? 1.0 : 0.48;
+      const glowStrength = gfx.postGlowEnabled ? 1.0 : 0.62;
       pulseGlowMat.uniforms.uGlowIntensity.value = glowStrength;
       pulseTrailMat.uniforms.uGlowIntensity.value = glowStrength;
 
@@ -876,8 +954,9 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
           eMesh.setMatrixAt(i, _dummy.matrix);
         } else if (proj.isPlayerOwned) {
           // Player Pulse Cannon Bolt: concentrated blue-white core + soft outer plasma sheath + short clean trail
-          const radiusScale = proj.boltRadius / 0.14;
-          const boltLen = proj.boltLength * 1.2;
+          // Compact but bold: thicker core/sheath, shorter body, trail anchored to the rear.
+          const radiusScale = (proj.boltRadius / 0.14) * 1.5;
+          const boltLen = proj.boltLength * 0.9;
 
           // Distance traveled since muzzle spawn so bolt & trail never clip backward behind cannon barrels
           const speed = Math.max(120, proj.velocity.length());
@@ -893,17 +972,17 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
           pCoreMesh.setMatrixAt(i, _dummy.matrix);
 
           // Layer B: Controlled outer plasma glow sheath
-          const glowRadScale = radiusScale * (gfx.postGlowEnabled ? 1.06 : 0.78);
+          const glowRadScale = radiusScale * (gfx.postGlowEnabled ? 1.25 : 0.95);
           _dummy.scale.set(glowRadScale, visibleBoltLen * 1.14, glowRadScale);
           _dummy.updateMatrix();
           pGlowMesh.setMatrixAt(i, _dummy.matrix);
 
           // Layer C: Short, clean tapered energy trail immediately behind core
-          const targetTrailLen = Math.min(5.6, boltLen * 0.86);
+          const targetTrailLen = Math.min(6.4, boltLen * 1.3);
           const trailLen = Math.min(targetTrailLen, Math.max(0, traveled - visibleBoltLen * 0.3));
           if (trailLen > 0.12) {
             _dummy.position.copy(proj.position).addScaledVector(proj.direction, rearOffset);
-            _dummy.scale.set(radiusScale * 0.96, trailLen, radiusScale * 0.96);
+            _dummy.scale.set(radiusScale * 0.9, trailLen, radiusScale * 0.9);
             _dummy.updateMatrix();
             pTrailMesh.setMatrixAt(i, _dummy.matrix);
           } else {
@@ -971,17 +1050,22 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
         const widthScale = p.size * Math.pow(lifeRatio, 0.75);
         const lengthScale = widthScale * Math.min(3.4, 0.75 + speed * 0.028) * p.stretchFactor * 0.65;
 
-        _dummy.position.copy(p.position);
-        if (speed > 0.01) {
-          _velDir.copy(p.velocity).divideScalar(speed);
-          _quat.setFromUnitVectors(_upVec, _velDir);
-          _dummy.quaternion.copy(_quat);
-        } else {
-          _dummy.quaternion.identity();
+        p.renderWidth = widthScale;
+        p.renderLength = Math.max(widthScale, lengthScale);
+        if (!p.anchored) {
+          _dummy.position.copy(p.position);
+          if (speed > 0.01) {
+            _velDir.copy(p.velocity).divideScalar(speed);
+            _quat.setFromUnitVectors(_upVec, _velDir);
+            _dummy.quaternion.copy(_quat);
+          } else {
+            _dummy.quaternion.identity();
+          }
+          _dummy.scale.set(p.renderWidth, p.renderLength, p.renderWidth);
+          _dummy.updateMatrix();
+          sMesh.setMatrixAt(i, _dummy.matrix);
         }
-        _dummy.scale.set(widthScale, Math.max(widthScale, lengthScale), widthScale);
-        _dummy.updateMatrix();
-        sMesh.setMatrixAt(i, _dummy.matrix);
+        // Anchored sparks get their matrix in updateAnchored() against the freshly updated ship transform.
         sMesh.setColorAt(i, p.color);
       }
       sMesh.instanceMatrix.needsUpdate = true;
@@ -1008,7 +1092,7 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
         const t = sw.age / sw.maxAge;
         const easeOut = 1 - Math.pow(1 - t, 3);
         m.group.visible = true;
-        m.group.position.copy(sw.position);
+        if (!sw.anchored) m.group.position.copy(sw.position);
 
         // Ring ripple / thermal breach plane
         const ringScale = sw.isHullImpact
@@ -1041,8 +1125,8 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
           Math.pow(1 - t, 1.85) * (sw.isExplosion ? 0.92 : sw.isHullImpact ? 0.88 : 0.78);
 
         // Controlled bloom glow sprite (compact on hits so targets stay clearly readable)
-        m.flash.visible = gfx.postGlowEnabled;
-        if (gfx.postGlowEnabled) {
+        m.flash.visible = gfx.postGlowEnabled || sw.isHullImpact;
+        if (m.flash.visible) {
           const spriteScale = sw.isExplosion
             ? sw.maxScale * (1.15 + easeOut * 0.85)
             : sw.isShieldBreak
@@ -1053,7 +1137,8 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
           m.flash.scale.setScalar(spriteScale);
           m.flashMat.opacity =
             Math.pow(1 - t, 1.55) *
-            (sw.isExplosion ? 0.88 : sw.isShieldBreak ? 0.92 : sw.isShield ? 0.78 : 0.68);
+            (sw.isExplosion ? 0.88 : sw.isShieldBreak ? 0.92 : sw.isShield ? 0.78 : 0.68) *
+            (gfx.postGlowEnabled ? 1 : 0.6);
         }
       }
 

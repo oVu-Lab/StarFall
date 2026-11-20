@@ -45,6 +45,12 @@ export interface VfxBurstEvent {
   scale: number;
   normal?: THREE.Vector3;
   weaponId?: string;
+  /** Entity whose shield/hull was struck (set for player hits so the scene can snap to the real shield mesh). */
+  targetId?: string;
+  /** Raw world-space collision point, before any shield-surface estimate. */
+  hitPoint?: THREE.Vector3;
+  /** Incoming projectile direction (world space), when known. */
+  direction?: THREE.Vector3;
 }
 
 export interface CombatCallbacks {
@@ -955,6 +961,9 @@ export class CombatManager {
             normal: shieldImpact?.normal,
             color: '#f97316',
             scale: 0.75,
+            targetId: PLAYER_ENTITY_ID,
+            hitPoint: _hitPoint,
+            direction: p.direction,
           });
           this.callbacks.onDamage?.({
             targetId: PLAYER_ENTITY_ID,
@@ -1024,7 +1033,7 @@ export class CombatManager {
             this.cameraImpulse = Math.min(1, this.cameraImpulse + 0.65);
             if (dmgRes.shieldDamage > 0) {
               const impact = projectShieldImpact(flight.position, flight.quaternion, flight.position, _impactDelta.subVectors(flight.position, enemy.position));
-              this.callbacks.onVfxBurst?.({ kind: dmgRes.shieldBrokenNow ? 'shield-break' : 'shield-hit', position: impact.position, normal: impact.normal, color: '#22d3ee', scale: 0.8 });
+              this.callbacks.onVfxBurst?.({ kind: dmgRes.shieldBrokenNow ? 'shield-break' : 'shield-hit', position: impact.position, normal: impact.normal, color: '#22d3ee', scale: 0.8, targetId: PLAYER_ENTITY_ID });
               if (dmgRes.shieldBrokenNow) this.callbacks.onShieldBreak?.(PLAYER_ENTITY_ID, true);
             }
             if (dmgRes.destroyedNow) {

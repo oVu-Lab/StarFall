@@ -330,6 +330,11 @@ export function PulseCannonVFX({
   }, [glowSpriteTex]);
 
   const muzzles = useMemo(() => resolvePulseCannonMuzzles(shipId), [shipId]);
+  // Barrel sleeve / aperture glow geometry is fitted to the VX-9 barrels only; the muzzle
+  // flash itself still follows the authoritative firing muzzles for every ship.
+  const hasBarrelGlow = shipId === 'interceptor';
+  const hasBarrelGlowRef = useRef(hasBarrelGlow);
+  hasBarrelGlowRef.current = hasBarrelGlow;
 
   // Shared lightweight procedural geometries (disposed cleanly on unmount)
   const geometries = useMemo(() => {
@@ -609,7 +614,7 @@ export function PulseCannonVFX({
       const flashVisible = active && env.intensity > 0.01;
 
       // Weapon readiness aura (subtle in hangar/menu, combat-ready in flight)
-      const showReadiness = active || showcase;
+      const showReadiness = hasBarrelGlowRef.current && (active || showcase);
       const readinessLevel = active ? 0.68 : showcase ? 0.34 : 0;
       rig.barrelMesh.visible = showReadiness;
       rig.apertureMesh.visible = showReadiness;
@@ -663,11 +668,12 @@ export function PulseCannonVFX({
       }
     }
 
-    // Shared lightweight dynamic muzzle bounce light on hull titanium (no shadows)
+    // Shared lightweight dynamic muzzle bounce light on hull titanium (no shadows).
+    // Kept permanently visible (intensity 0 when idle): toggling `visible` changes the scene's
+    // light count and forces every lit material to recompile mid-combat.
     const muzzleLight = muzzleLightRef.current;
     if (muzzleLight) {
       if (active && gfx.postGlowEnabled && maxFlashIntensity > 0.02 && lightWeight > 0.001) {
-        muzzleLight.visible = true;
         muzzleLight.position.set(
           lightX / lightWeight,
           muzzles[0][1] + 0.08,
@@ -675,7 +681,6 @@ export function PulseCannonVFX({
         );
         muzzleLight.intensity = maxFlashIntensity * (3.2 + twinBoost * 1.1);
       } else {
-        muzzleLight.visible = false;
         muzzleLight.intensity = 0;
       }
     }
@@ -700,7 +705,6 @@ export function PulseCannonVFX({
         intensity={0}
         distance={7.5}
         decay={2}
-        visible={false}
       />
     </group>
   );

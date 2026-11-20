@@ -159,6 +159,84 @@ export function consumeShieldImpacts(entityId: string, mesh: THREE.Mesh<THREE.Bu
 export function clearShieldImpacts(): void {
   pendingImpacts.clear();
 }
+
+export interface ShieldSurfaceHit {
+  /** World-space point on the un-inflated shield skin (use for the shader ripple). */
+  surface: THREE.Vector3;
+  /** World-space point on the rendered (inflated) outer skin (use for billboarded VFX). */
+  position: THREE.Vector3;
+  /** Unit outward surface normal in world space. */
+  normal: THREE.Vector3;
+}
+
+export function createShieldSurfaceHit(): ShieldSurfaceHit {
+  return { surface: new THREE.Vector3(), position: new THREE.Vector3(), normal: new THREE.Vector3() };
+}
+
+const PROBE_DISTANCE = 40;
+const _probeRaycaster = new THREE.Raycaster();
+const _probeHits: THREE.Intersection[] = [];
+const _probeOrigin = new THREE.Vector3();
+const _probeDir = new THREE.Vector3();
+const _probeCenter = new THREE.Vector3();
+const _probeNormal = new THREE.Vector3();
+
+function castAgainstShield(
+  mesh: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>,
+  origin: THREE.Vector3,
+  dir: THREE.Vector3,
+  out: ShieldSurfaceHit,
+): boolean {
+  _probeRaycaster.set(origin, dir);
+  _probeRaycaster.near = 0;
+  _probeRaycaster.far = PROBE_DISTANCE * 2.5;
+  _probeHits.length = 0;
+  mesh.raycast(_probeRaycaster, _probeHits);
+  if (_probeHits.length === 0) return false;
+  let best = _probeHits[0];
+  for (let i = 1; i < _probeHits.length; i++) if (_probeHits[i].distance < best.distance) best = _probeHits[i];
+
+  const localNormal = best.normal ?? best.face?.normal;
+  if (!localNormal) return false;
+  _probeNormal.copy(localNormal).transformDirection(mesh.matrixWorld);
+  if (_probeNormal.dot(dir) > 0) _probeNormal.negate(); // always face the incoming side
+  out.normal.copy(_probeNormal);
+  out.surface.copy(best.point);
+  out.position.copy(best.point).addScaledVector(out.normal, mesh.material.uniforms.uInflate.value as number);
+  _probeHits.length = 0;
+  return true;
+}
+
+/**
+ * Project a world-space hit onto the *actual* rendered shield skin (hull-fit mesh or fallback ellipsoid),
+ * using the shield's current world transform (ship position, rotation, bank). First tries the real
+ * incoming projectile path; if it grazes past the skin, falls back to the radial line through the hit.
+ * Writes world-space results to `out`; returns false when no surface could be found.
+ * Allocation-free after module load.
+ */
+export function projectOntoShieldSurface(
+  mesh: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>,
+  hitPoint: THREE.Vector3,
+  incomingDirection: THREE.Vector3 | undefined,
+  out: ShieldSurfaceHit,
+): boolean {
+  mesh.updateWorldMatrix(true, false);
+
+  if (incomingDirection && incomingDirection.lengthSq() > 1e-8) {
+    _probeDir.copy(incomingDirection).normalize();
+    _probeOrigin.copy(hitPoint).addScaledVector(_probeDir, -PROBE_DISTANCE);
+    if (castAgainstShield(mesh, _probeOrigin, _probeDir, out)) return true;
+  }
+
+  _probeCenter.copy(mesh.material.uniforms.uCenter.value as THREE.Vector3);
+  mesh.localToWorld(_probeCenter);
+  _probeDir.subVectors(_probeCenter, hitPoint);
+  if (_probeDir.lengthSq() < 1e-8) return false;
+  _probeDir.normalize();
+  _probeOrigin.copy(_probeCenter).addScaledVector(_probeDir, -PROBE_DISTANCE);
+  return castAgainstShield(mesh, _probeOrigin, _probeDir, out);
+}
+
 let sharedGeometry: THREE.BufferGeometry | null = null;
 let nextSeed = 0;
 

@@ -6,7 +6,7 @@ import type { GraphicsPreset } from '../config/graphics';
 import { SHIP_CONFIGS } from '../config/ships';
 import { AssetManager } from '../engine/AssetManager';
 import { CameraController } from '../engine/CameraController';
-import { PLAYER_ENTITY_ID, type CombatManager } from '../engine/combat/CombatManager';
+import { PLAYER_ENTITY_ID, type CombatManager, type VfxBurstEvent } from '../engine/combat/CombatManager';
 import type { FlightController } from '../engine/FlightController';
 import type { InputManager } from '../engine/InputManager';
 import type { MissionManager } from '../engine/mission/MissionManager';
@@ -26,7 +26,15 @@ import { buildVanguardModel } from './vanguardModel';
 import { SpaceEnvironment } from './SpaceEnvironment';
 import { SpeedLinesVFX } from './SpeedLinesVFX';
 import { TransportRenderer } from './TransportRenderer';
-import { consumeShieldImpacts, createShieldField, disposeShieldField, queueShieldImpact, updateShieldField } from './ShieldField';
+import {
+  consumeShieldImpacts,
+  createShieldField,
+  createShieldSurfaceHit,
+  disposeShieldField,
+  projectOntoShieldSurface,
+  queueShieldImpact,
+  updateShieldField,
+} from './ShieldField';
 
 interface GameSceneProps {
   phase: GamePhase;
@@ -47,6 +55,16 @@ interface GameSceneProps {
 }
 
 const _showcaseOrigin = new THREE.Vector3(0, 12, 40);
+
+// Scratch objects for snapping player shield impacts onto the real shield skin (no per-hit allocations)
+const _playerShieldHit = createShieldSurfaceHit();
+let _playerShieldHitValid = false;
+const _anchorLocalPos = new THREE.Vector3();
+const _anchorLocalNormal = new THREE.Vector3();
+const _anchorInv = new THREE.Matrix4();
+const _anchorNormalMat = new THREE.Matrix3();
+const _vfxAnchor = { localPosition: _anchorLocalPos, localNormal: _anchorLocalNormal };
+const _snappedBurst: VfxBurstEvent = { kind: 'shield-hit', position: _playerShieldHit.position, color: '', scale: 1 };
 
 export function GameScene({
   phase,
@@ -87,6 +105,8 @@ export function GameScene({
     [shipHandle],
   );
   useEffect(() => () => disposeShieldField(shieldField), [shieldField]);
+  const shieldFieldRef = useRef(shieldField);
+  shieldFieldRef.current = shieldField;
 
   useEffect(() => {
     shipHandle.setDetailLevel?.(graphics.postGlowEnabled);
@@ -111,7 +131,12 @@ export function GameScene({
       onDamage: (evt) => {
         missionManager.handleDamage(evt);
         if ((evt.shieldDamage ?? 0) > 0) {
-          queueShieldImpact(evt.targetId, evt.hitPoint, Math.min(1.2, 0.55 + (evt.shieldDamage ?? 0) / 40));
+          // Player hits: ripple centre is the point snapped onto the real shield skin (see onVfxBurst)
+          const ripplePoint = evt.targetId === PLAYER_ENTITY_ID && _playerShieldHitValid
+            ? _playerShieldHit.surface
+            : evt.hitPoint;
+          queueShieldImpact(evt.targetId, ripplePoint, Math.min(1.2, 0.55 + (evt.shieldDamage ?? 0) / 40));
+          if (evt.targetId === PLAYER_ENTITY_ID) _playerShieldHitValid = false;
         }
         if (evt.targetId === PLAYER_ENTITY_ID) {
           if ((evt.shieldDamage ?? 0) > 0 && (evt.hullDamage ?? 0) === 0) AudioManager.playShieldHit();
@@ -132,6 +157,39 @@ export function GameScene({
         }
       },
       onVfxBurst: (evt) => {
+        const isPlayerShieldBurst =
+          evt.targetId === PLAYER_ENTITY_ID && (evt.kind === 'shield-hit' || evt.kind === 'shield-break');
+        const root = shipRootRef.current;
+        const bank = shipBankRef.current;
+        if (isPlayerShieldBurst && root && bank) {
+          // The hit was resolved against this frame's flight pose, but the ship meshes are only moved later in
+          // the frame. Sync the (idempotent) ship transform so the shield mesh matches the collision data.
+          root.position.copy(flight.position);
+          root.quaternion.copy(flight.quaternion);
+          bank.rotation.set(0, 0, flight.visualBankAngle);
+          const shield = shieldFieldRef.current;
+          _playerShieldHitValid = projectOntoShieldSurface(
+            shield,
+            evt.hitPoint ?? evt.position,
+            evt.direction,
+            _playerShieldHit,
+          );
+          if (_playerShieldHitValid) {
+            // Shield-local placement so the effect rides the surface as the ship moves/rotates/rolls
+            _anchorInv.copy(shield.matrixWorld).invert();
+            _anchorLocalPos.copy(_playerShieldHit.position).applyMatrix4(_anchorInv);
+            // world->local normal transform is the transpose of the (rotation-dominant) local->world 3x3
+            _anchorNormalMat.setFromMatrix4(shield.matrixWorld).transpose();
+            _anchorLocalNormal.copy(_playerShieldHit.normal).applyMatrix3(_anchorNormalMat).normalize();
+            _snappedBurst.kind = evt.kind;
+            _snappedBurst.color = evt.color;
+            _snappedBurst.scale = evt.scale;
+            _snappedBurst.normal = _playerShieldHit.normal;
+            _snappedBurst.weaponId = evt.weaponId;
+            vfxRef.current?.spawnBurst(_snappedBurst, _vfxAnchor);
+            return;
+          }
+        }
         vfxRef.current?.spawnBurst(evt);
       },
     });
@@ -232,6 +290,10 @@ export function GameScene({
       }
 
       const speedRatio = telemetry.speed / Math.max(telemetry.maxSpeed, 1);
+      if (shipRootRef.current) {
+        shieldField.updateWorldMatrix(true, false);
+        vfxRef.current?.updateAnchored(shieldField.matrixWorld);
+      }
       shipHandle.updateVisuals(
         dt,
         speedRatio,
