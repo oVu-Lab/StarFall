@@ -6,7 +6,7 @@ import { SHIP_CONFIGS } from '../config/ships';
 import { MAX_ENEMIES, type CombatManager } from '../engine/combat/CombatManager';
 import type { ShipConfig, ShipVisualHandle } from '../types/game';
 import { buildShipModel } from './shipGeometry';
-import { createShieldField, disposeShieldField, updateShieldField } from './ShieldField';
+import { consumeShieldImpacts, createShieldField, disposeShieldField, updateShieldField } from './ShieldField';
 
 interface EnemyShipRendererProps {
   combat: CombatManager;
@@ -117,6 +117,7 @@ export function EnemyShipRenderer({
       slot.root.position.copy(enemy.position);
       slot.root.quaternion.copy(enemy.quaternion);
       slot.bankGroup.rotation.set(0, 0, enemy.visualBankAngle);
+      consumeShieldImpacts(enemy.id, slot.shieldField);
       updateShieldField(slot.shieldField, enemy.shield, state.clock.elapsedTime, dt);
 
       // Distance-based LOD: disable dynamic PointLight & engine flare sprites on distant ships

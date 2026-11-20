@@ -24,7 +24,7 @@ import { buildShipModel } from './shipGeometry';
 import { SpaceEnvironment } from './SpaceEnvironment';
 import { SpeedLinesVFX } from './SpeedLinesVFX';
 import { TransportRenderer } from './TransportRenderer';
-import { createShieldField, disposeShieldField, updateShieldField } from './ShieldField';
+import { consumeShieldImpacts, createShieldField, disposeShieldField, queueShieldImpact, updateShieldField } from './ShieldField';
 
 interface GameSceneProps {
   phase: GamePhase;
@@ -147,6 +147,9 @@ export function GameScene({
       },
       onDamage: (evt) => {
         missionManager.handleDamage(evt);
+        if ((evt.shieldDamage ?? 0) > 0) {
+          queueShieldImpact(evt.targetId, evt.hitPoint, Math.min(1.2, 0.55 + (evt.shieldDamage ?? 0) / 40));
+        }
         if (evt.targetId === PLAYER_ENTITY_ID) {
           if ((evt.shieldDamage ?? 0) > 0 && (evt.hullDamage ?? 0) === 0) AudioManager.playShieldHit();
           else AudioManager.playPlayerDamage();
@@ -258,6 +261,7 @@ export function GameScene({
         shipRootRef.current.position.copy(flight.position);
         shipRootRef.current.quaternion.copy(flight.quaternion);
       }
+      consumeShieldImpacts(PLAYER_ENTITY_ID, shieldField);
       updateShieldField(shieldField, combat.playerShield, state.clock.elapsedTime, dt);
       shieldField.visible = playerAlive && shieldField.visible;
       if (shipBankRef.current) {
@@ -301,6 +305,7 @@ export function GameScene({
         shipRootRef.current.position.copy(flight.position);
         shipRootRef.current.quaternion.copy(flight.quaternion);
       }
+      consumeShieldImpacts(PLAYER_ENTITY_ID, shieldField);
       updateShieldField(shieldField, combat.playerShield, state.clock.elapsedTime, dt);
       shieldField.visible = combatVisible && !combat.playerHealth.isDestroyed && shieldField.visible;
       shipHandle.updateVisuals(dt * 0.25, 0.2, 0, 0, 0, 0);
