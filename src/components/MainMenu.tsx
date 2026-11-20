@@ -15,6 +15,7 @@ interface MainMenuProps {
   onSelectMission: (missionId: string) => void;
   onLaunchMission: (mission: MissionDefinition) => void;
   hangarShipId: ShipId;
+  hangarSkinId: string;
   onSelectHangarShip: (id: ShipId) => void;
   onSelectSkin: (shipId: ShipId, skinId: string) => void;
   onPreviewSkin: (skinId: string) => void;
@@ -33,6 +34,7 @@ export function MainMenu({
   onSelectMission,
   onLaunchMission,
   hangarShipId,
+  hangarSkinId,
   onSelectHangarShip,
   onSelectSkin,
   onPreviewSkin,
@@ -58,6 +60,7 @@ export function MainMenu({
     return (
       <HangarView
         selectedShipId={hangarShipId}
+        previewSkinId={hangarSkinId}
         onSelectShip={onSelectHangarShip}
         save={campaignSave}
         notice={collectionNotice}

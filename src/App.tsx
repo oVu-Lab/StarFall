@@ -491,6 +491,7 @@ export default function App() {
           onSelectMission={setSelectedMissionId}
           onLaunchMission={handleStartMission}
           hangarShipId={hangarShipId}
+          hangarSkinId={hangarSkinId}
           collectionNotice={collectionNotice}
           onSelectHangarShip={handleSelectShip}
           onSelectSkin={handleSelectSkin}

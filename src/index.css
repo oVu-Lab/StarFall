@@ -56,3 +56,26 @@ input[type="range"].starfall-slider::-moz-range-thumb {
   border: 1px solid #cffafe;
   cursor: pointer;
 }
+
+/* Subtle sci-fi scrollbar for Hangar inspector panel */
+.hangar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(56, 189, 248, 0.28) rgba(19, 23, 34, 0.4);
+}
+
+.hangar-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+
+.hangar-scroll::-webkit-scrollbar-track {
+  background: rgba(19, 23, 34, 0.4);
+}
+
+.hangar-scroll::-webkit-scrollbar-thumb {
+  background: rgba(56, 189, 248, 0.28);
+  border-radius: 9999px;
+}
+
+.hangar-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(56, 189, 248, 0.5);
+}

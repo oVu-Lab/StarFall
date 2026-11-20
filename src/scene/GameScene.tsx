@@ -20,6 +20,7 @@ import type {
 import type { MissionEnvironmentTheme } from '../types/mission';
 import { CombatVFX, type CombatVFXHandle } from './CombatVFX';
 import { EnemyShipRenderer } from './EnemyShipRenderer';
+import { HangarStage } from './HangarStage';
 import { PulseCannonVFX } from './PulseCannonVFX';
 import { buildShipModel } from './shipGeometry';
 import { buildVanguardModel } from './vanguardModel';
@@ -93,11 +94,20 @@ export function GameScene({
   const shipBankRef = useRef<THREE.Group>(null);
   const vfxRef = useRef<CombatVFXHandle>(null);
   const cameraController = useMemo(() => new CameraController(), []);
+  const showcaseSettleRef = useRef(0);
 
   // Display the inspected ship while in Hangar, otherwise the active flight ship
-  const displayedShipId = phase === 'menu' && menuSection === 'hangar' ? hangarShipId : activeShipId;
-  const displayedSkinId = phase === 'menu' && menuSection === 'hangar' ? hangarSkinId : activeSkinId;
+  const isHangarShowcase = phase === 'menu' && menuSection === 'hangar';
+  const displayedShipId = isHangarShowcase ? hangarShipId : activeShipId;
+  const displayedSkinId = isHangarShowcase ? hangarSkinId : activeSkinId;
   const displayedShipConfig = useMemo(() => getShipConfigWithSkin(displayedShipId, displayedSkinId), [displayedShipId, displayedSkinId]);
+
+  // Trigger a subtle, deliberate entrance settle when switching ships in the Hangar
+  useEffect(() => {
+    if (isHangarShowcase) {
+      showcaseSettleRef.current = 1;
+    }
+  }, [displayedShipId, isHangarShowcase]);
 
   const shipHandle = useMemo(
     () =>
@@ -333,23 +343,32 @@ export function GameScene({
     // Menu, Hangar, Mission Select, or Loading showcase mode
     const t = state.clock.elapsedTime;
     shieldField.visible = false;
-    const hoverY = _showcaseOrigin.y + Math.sin(t * 1.15) * 0.28;
+    showcaseSettleRef.current = THREE.MathUtils.damp(showcaseSettleRef.current, 0, 7.5, dt);
+    const settle = showcaseSettleRef.current;
+    const hoverAmp = isHangarShowcase ? 0.2 : 0.28;
+    const hoverY = _showcaseOrigin.y + Math.sin(t * 1.05) * hoverAmp - settle * 0.42;
+    const shipScale = 1 - settle * 0.055;
 
     if (shipRootRef.current) {
       shipRootRef.current.visible = true;
       shipRootRef.current.position.set(_showcaseOrigin.x, hoverY, _showcaseOrigin.z);
+      shipRootRef.current.scale.setScalar(shipScale);
       shipRootRef.current.quaternion.setFromEuler(
-        new THREE.Euler(Math.sin(t * 0.7) * 0.04, 0, Math.cos(t * 0.85) * 0.06),
+        new THREE.Euler(
+          Math.sin(t * 0.65) * (isHangarShowcase ? 0.028 : 0.04),
+          0,
+          Math.cos(t * 0.8) * (isHangarShowcase ? 0.042 : 0.06),
+        ),
       );
     }
     if (shipBankRef.current) {
       shipBankRef.current.rotation.set(0, 0, 0);
     }
 
-    shipHandle.updateVisuals(dt, 0.32, menuSection === 'hangar' ? 0.18 : 0.12, 0, 0, 0);
+    shipHandle.updateVisuals(dt, 0.32, isHangarShowcase ? 0.2 : 0.12, 0, 0, 0);
 
     if (camera instanceof THREE.PerspectiveCamera) {
-      const mode = menuSection === 'hangar' ? 'hangar' : 'menu';
+      const mode = isHangarShowcase ? 'hangar' : 'menu';
       cameraController.updateShowcase(
         dt,
         _showcaseOrigin,
@@ -361,11 +380,24 @@ export function GameScene({
     }
   });
 
+  // Reset scale cleanly when entering active flight
+  useEffect(() => {
+    if (phase === 'playing' && shipRootRef.current) {
+      shipRootRef.current.scale.setScalar(1);
+    }
+  }, [phase]);
+
   const combatVisible = phase === 'playing' || phase === 'paused' || phase === 'results';
 
   return (
     <>
       <SpaceEnvironment graphics={graphics} theme={missionTheme} />
+      <HangarStage
+        origin={_showcaseOrigin}
+        active={isHangarShowcase}
+        accentColor={displayedShipConfig.colors.hullTrim}
+        transitionKey={`${displayedShipId}:${displayedSkinId}`}
+      />
 
       <group ref={shipRootRef} position={[0, 12, 40]}>
         <group ref={shipBankRef}>

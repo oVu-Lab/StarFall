@@ -232,17 +232,14 @@ export class CameraController {
     manualPitchOffset = 0,
   ): void {
     const safeDt = Math.min(Math.max(dt, 0.0001), 0.05);
-    this.orbitTime += safeDt * (mode === 'hangar' ? 0.22 : 0.14);
+    this.orbitTime += safeDt * (mode === 'hangar' ? 0.13 : 0.14);
 
-    const radius = mode === 'hangar' ? 9.6 : 11.4;
-    const angle = (mode === 'hangar' ? 0.7 : 0.55) + this.orbitTime + manualYawOffset;
+    const radius = mode === 'hangar' ? 10.2 : 11.4;
+    const angle = (mode === 'hangar' ? 0.68 : 0.55) + this.orbitTime + manualYawOffset;
     const elevation =
       mode === 'hangar'
-        ? THREE.MathUtils.clamp(2.2 + manualPitchOffset * 4.0, -1.5, 5.2)
+        ? THREE.MathUtils.clamp(2.15 + manualPitchOffset * 4.0, -1.35, 5.1)
         : 2.8 + Math.sin(this.orbitTime * 0.7) * 0.7;
-
-    // Offset slightly right on menu so the fighter frames beautifully beside left-aligned menu actions
-    const framingOffsetX = mode === 'menu' ? -2.2 : 0;
 
     _desiredPos.set(
       targetPos.x + Math.sin(angle) * radius,
@@ -250,10 +247,29 @@ export class CameraController {
       targetPos.z + Math.cos(angle) * radius,
     );
 
-    const alpha = 1 - Math.exp(-4.5 * safeDt);
+    const alpha = 1 - Math.exp(-4.8 * safeDt);
     this.currentPos.lerp(_desiredPos, alpha);
 
-    _lookTarget.set(targetPos.x + framingOffsetX, targetPos.y + 0.25, targetPos.z);
+    if (mode === 'hangar') {
+      // Frame the spacecraft cleanly in the unobstructed showcase region:
+      // on wide desktop viewports shift look-target along camera-right so the ship centers
+      // to the left of the inspector panel; on narrow screens shift down slightly so it
+      // sits cleanly above the bottom drawer.
+      const isWideDesktop = camera.aspect > 1.25;
+      const rightOffset = isWideDesktop ? 1.55 : 0;
+      const verticalOffset = isWideDesktop ? 0.1 : -0.6;
+      const camRightX = Math.cos(angle);
+      const camRightZ = -Math.sin(angle);
+      _lookTarget.set(
+        targetPos.x + camRightX * rightOffset,
+        targetPos.y + verticalOffset,
+        targetPos.z + camRightZ * rightOffset,
+      );
+    } else {
+      // Offset slightly right on menu so the fighter frames beautifully beside left-aligned menu actions
+      _lookTarget.set(targetPos.x - 2.2, targetPos.y + 0.25, targetPos.z);
+    }
+
     _lookMatrix.lookAt(this.currentPos, _lookTarget, _up.set(0, 1, 0));
     _desiredQuat.setFromRotationMatrix(_lookMatrix);
     this.currentQuat.slerp(_desiredQuat, alpha);
@@ -261,7 +277,7 @@ export class CameraController {
     camera.position.copy(this.currentPos);
     camera.quaternion.copy(this.currentQuat);
 
-    const targetFov = mode === 'hangar' ? 46 : 52;
+    const targetFov = mode === 'hangar' ? 44 : 52;
     const nextFov = THREE.MathUtils.damp(this.currentFov, targetFov, 5.0, safeDt);
     if (Math.abs(nextFov - this.currentFov) > 0.01) {
       this.currentFov = nextFov;
