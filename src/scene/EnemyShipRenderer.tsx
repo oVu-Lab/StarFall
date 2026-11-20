@@ -6,6 +6,7 @@ import { SHIP_CONFIGS } from '../config/ships';
 import { MAX_ENEMIES, type CombatManager } from '../engine/combat/CombatManager';
 import type { ShipConfig, ShipVisualHandle } from '../types/game';
 import { buildShipModel } from './shipGeometry';
+import { createShieldField, disposeShieldField, updateShieldField } from './ShieldField';
 
 interface EnemyShipRendererProps {
   combat: CombatManager;
@@ -34,6 +35,7 @@ interface PooledEnemySlot {
   handle: ShipVisualHandle;
   hitGlowSprite: THREE.Sprite;
   hitGlowMat: THREE.SpriteMaterial;
+  shieldField: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
 }
 
 /**
@@ -79,8 +81,10 @@ export function EnemyShipRenderer({
       const hitGlowSprite = new THREE.Sprite(hitGlowMat);
       hitGlowSprite.scale.set(6.5, 6.5, 1);
       root.add(hitGlowSprite);
+      const shieldField = createShieldField('#fb923c', handle.group);
+      bankGroup.add(shieldField);
 
-      list.push({ root, bankGroup, handle, hitGlowSprite, hitGlowMat });
+      list.push({ root, bankGroup, handle, hitGlowSprite, hitGlowMat, shieldField });
     }
     return list;
   }, [graphics.textureResolution]);
@@ -90,11 +94,12 @@ export function EnemyShipRenderer({
       for (const s of slots) {
         s.handle.dispose();
         s.hitGlowMat.dispose();
+        disposeShieldField(s.shieldField);
       }
     };
   }, [slots]);
 
-  useFrame((_, delta) => {
+  useFrame((state, delta) => {
     const dt = Math.min(delta, 0.05);
     const enemies = combat.enemies;
     const lodDistSq = graphics.enemyLightLodDistance * graphics.enemyLightLodDistance;
@@ -112,6 +117,7 @@ export function EnemyShipRenderer({
       slot.root.position.copy(enemy.position);
       slot.root.quaternion.copy(enemy.quaternion);
       slot.bankGroup.rotation.set(0, 0, enemy.visualBankAngle);
+      updateShieldField(slot.shieldField, enemy.shield, state.clock.elapsedTime, dt);
 
       // Distance-based LOD: disable dynamic PointLight & engine flare sprites on distant ships
       const distSq = enemy.position.distanceToSquared(playerPosition);

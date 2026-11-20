@@ -24,6 +24,7 @@ import { buildShipModel } from './shipGeometry';
 import { SpaceEnvironment } from './SpaceEnvironment';
 import { SpeedLinesVFX } from './SpeedLinesVFX';
 import { TransportRenderer } from './TransportRenderer';
+import { createShieldField, disposeShieldField, updateShieldField } from './ShieldField';
 
 interface GameSceneProps {
   phase: GamePhase;
@@ -85,6 +86,11 @@ export function GameScene({
     () => buildShipModel(displayedShipConfig, graphics.textureResolution),
     [displayedShipConfig, graphics.textureResolution],
   );
+  const shieldField = useMemo(
+    () => createShieldField('#22d3ee', shipHandle.group),
+    [shipHandle],
+  );
+  useEffect(() => () => disposeShieldField(shieldField), [shieldField]);
 
   useEffect(() => {
     shipHandle.setDetailLevel?.(graphics.postGlowEnabled);
@@ -142,10 +148,14 @@ export function GameScene({
       onDamage: (evt) => {
         missionManager.handleDamage(evt);
         if (evt.targetId === PLAYER_ENTITY_ID) {
-          AudioManager.playPlayerDamage();
+          if ((evt.shieldDamage ?? 0) > 0 && (evt.hullDamage ?? 0) === 0) AudioManager.playShieldHit();
+          else AudioManager.playPlayerDamage();
         } else {
           AudioManager.playImpactHit(evt.destroyed);
         }
+      },
+      onShieldBreak: (_entityId, isPlayer) => {
+        if (isPlayer) AudioManager.playShieldBreak();
       },
       onDestruction: (evt) => {
         const dist = flight.position.distanceTo(evt.position);
@@ -248,6 +258,8 @@ export function GameScene({
         shipRootRef.current.position.copy(flight.position);
         shipRootRef.current.quaternion.copy(flight.quaternion);
       }
+      updateShieldField(shieldField, combat.playerShield, state.clock.elapsedTime, dt);
+      shieldField.visible = playerAlive && shieldField.visible;
       if (shipBankRef.current) {
         shipBankRef.current.rotation.set(0, 0, flight.visualBankAngle);
       }
@@ -289,12 +301,15 @@ export function GameScene({
         shipRootRef.current.position.copy(flight.position);
         shipRootRef.current.quaternion.copy(flight.quaternion);
       }
+      updateShieldField(shieldField, combat.playerShield, state.clock.elapsedTime, dt);
+      shieldField.visible = combatVisible && !combat.playerHealth.isDestroyed && shieldField.visible;
       shipHandle.updateVisuals(dt * 0.25, 0.2, 0, 0, 0, 0);
       return;
     }
 
     // Menu, Hangar, Mission Select, or Loading showcase mode
     const t = state.clock.elapsedTime;
+    shieldField.visible = false;
     const hoverY = _showcaseOrigin.y + Math.sin(t * 1.15) * 0.28;
 
     if (shipRootRef.current) {
@@ -334,6 +349,7 @@ export function GameScene({
       <group ref={shipRootRef} position={[0, 12, 40]}>
         <group ref={shipBankRef}>
           <primitive object={shipHandle.group} />
+        <primitive object={shieldField} />
           <sprite
             ref={muzzleLeftRef}
             material={muzzleMatLeft}

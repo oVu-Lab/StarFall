@@ -12,6 +12,9 @@ export const SHIP_CONFIGS: Record<ShipId, ShipConfig> = {
     playableInPhase1: true,
     unlockNote: 'Active Flight Prototype',
     maxHull: 100,
+    maxShield: 75,
+    shieldRechargeDelay: 4,
+    shieldRechargeRate: 8,
     ratings: {
       speed: 96,
       maneuverability: 94,
@@ -61,6 +64,9 @@ export const SHIP_CONFIGS: Record<ShipId, ShipConfig> = {
     playableInPhase1: false,
     unlockNote: 'Coming Soon — Unlockable in Combat Campaign',
     maxHull: 150,
+    maxShield: 110,
+    shieldRechargeDelay: 4,
+    shieldRechargeRate: 9,
     ratings: {
       speed: 78,
       maneuverability: 79,
@@ -110,6 +116,9 @@ export const SHIP_CONFIGS: Record<ShipId, ShipConfig> = {
     playableInPhase1: false,
     unlockNote: 'Coming Soon — Unlockable via Mission Rank Progression',
     maxHull: 230,
+    maxShield: 160,
+    shieldRechargeDelay: 4.5,
+    shieldRechargeRate: 10,
     ratings: {
       speed: 62,
       maneuverability: 58,

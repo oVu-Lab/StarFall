@@ -48,6 +48,16 @@ export interface HealthState {
   lastAttackerId: EntityId | null;
 }
 
+export interface ShieldState {
+  current: number;
+  max: number;
+  rechargeDelay: number;
+  rechargeRate: number;
+  lastHitTime: number;
+  isBroken: boolean;
+  isRecharging: boolean;
+}
+
 export interface ProjectileState {
   id: number;
   active: boolean;
@@ -106,6 +116,9 @@ export interface BotPersonalityConfig {
   weaponId: string;
   /** Base hull integrity */
   maxHull: number;
+  maxShield: number;
+  shieldRechargeDelay: number;
+  shieldRechargeRate: number;
 }
 
 export interface EnemyEntity {
@@ -123,6 +136,7 @@ export interface EnemyEntity {
   visualBankAngle: number;
   collisionRadius: number;
   health: HealthState;
+  shield: ShieldState;
   aiState: BotAIState;
   aiStateTimer: number;
   reactionTimer: number;
@@ -179,6 +193,10 @@ export interface DamageEvent {
   destroyed: boolean;
   hitPoint: THREE.Vector3;
   timestamp: number;
+  shieldDamage?: number;
+  hullDamage?: number;
+  shieldRemaining?: number;
+  maxShield?: number;
 }
 
 export interface DestructionEvent {

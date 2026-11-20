@@ -75,6 +75,9 @@ export interface ShipConfig {
   playableInPhase1: boolean;
   unlockNote: string;
   maxHull: number;
+  maxShield: number;
+  shieldRechargeDelay: number;
+  shieldRechargeRate: number;
   /** Normalized 0-100 ratings for hangar specification bars */
   ratings: {
     speed: number;
@@ -148,6 +151,10 @@ export interface FlightTelemetry {
   boostIntensity: number; // 0 to 1 smoothly damped
   hull: number;
   maxHull: number;
+  shield: number;
+  maxShield: number;
+  shieldRecharging: boolean;
+  shieldBroken: boolean;
   yawRate: number; // normalized angular velocity relative to base yawSpeed
   pitchRate: number; // normalized angular velocity relative to base pitchSpeed
   rollRate: number; // normalized -1..1

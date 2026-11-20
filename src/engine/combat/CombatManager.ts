@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { BOT_PERSONALITIES } from '../../config/botPersonalities';
+import { SHIP_CONFIGS } from '../../config/ships';
 import { WEAPON_CONFIGS } from '../../config/weapons';
 import type {
   CombatStats,
@@ -7,6 +8,7 @@ import type {
   DestructionEvent,
   EnemyEntity,
   HealthState,
+  ShieldState,
   ProjectedEnemyMarker,
   WeaponConfig,
   WeaponFireEvent,
@@ -19,7 +21,7 @@ import type { FlightController } from '../FlightController';
 import type { InputSnapshot } from '../InputManager';
 import { intersectSegmentSphere, intersectSphereSphere } from './CollisionSystem';
 import { EnemyAIController } from './EnemyAIController';
-import { applyDamage, createHealthState, getHealthRatio, resetHealthState } from './HealthSystem';
+import { applyDamage, applyShieldedDamage, createHealthState, createShieldState, getHealthRatio, resetHealthState, resetShieldState, updateShieldRecharge } from './HealthSystem';
 import { ProjectilePool } from './ProjectilePool';
 import { advanceEvasion, MISSILE_EVASION_SECONDS, MISSILE_LOCK_SECONDS, canLaunchMissile, canMissileDamageTarget, guideMissile, isIncomingMissile, isTargetInCameraView, shouldAiUseMissile, updateTargetLock } from './MissileRules';
 
@@ -37,10 +39,11 @@ export function shouldEnemyTargetTransport(
 }
 
 export interface VfxBurstEvent {
-  kind: 'impact' | 'explosion' | 'player-hit';
+  kind: 'impact' | 'explosion' | 'player-hit' | 'shield-hit' | 'shield-break';
   position: THREE.Vector3;
   color: string;
   scale: number;
+  normal?: THREE.Vector3;
 }
 
 export interface CombatCallbacks {
@@ -49,6 +52,8 @@ export interface CombatCallbacks {
   onDamage?: (evt: DamageEvent) => void;
   onDestruction?: (evt: DestructionEvent) => void;
   onVfxBurst?: (evt: VfxBurstEvent) => void;
+  onShieldBreak?: (entityId: string, isPlayer: boolean) => void;
+  onShieldRecharge?: (entityId: string, isPlayer: boolean) => void;
 }
 
 // Reusable scratch math helpers (zero per-frame GC allocations)
@@ -58,6 +63,12 @@ const _muzzleLocal = new THREE.Vector3();
 const _muzzleWorld = new THREE.Vector3();
 const _fireDir = new THREE.Vector3();
 const _hitPoint = new THREE.Vector3();
+const _shieldNormal = new THREE.Vector3();
+const _impactDelta = new THREE.Vector3();
+const _impactLocal = new THREE.Vector3();
+const _impactNormalLocal = new THREE.Vector3();
+const _impactPosition = new THREE.Vector3();
+const _impactInverseQuaternion = new THREE.Quaternion();
 const _sepVec = new THREE.Vector3();
 const _projVec = new THREE.Vector3();
 const _leadWorld = new THREE.Vector3();
@@ -65,6 +76,35 @@ const _rightVec = new THREE.Vector3();
 const _upVec = new THREE.Vector3();
 const _forwardVec = new THREE.Vector3();
 const _transportDelta = new THREE.Vector3();
+
+function projectShieldImpact(
+  center: THREE.Vector3,
+  rotation: THREE.Quaternion,
+  hitPoint: THREE.Vector3,
+  fallbackDirection?: THREE.Vector3,
+): { position: THREE.Vector3; normal: THREE.Vector3 } {
+  _impactInverseQuaternion.copy(rotation).invert();
+  _impactLocal.subVectors(hitPoint, center).applyQuaternion(_impactInverseQuaternion);
+  if (_impactLocal.lengthSq() < 0.0001) {
+    _impactLocal.copy(fallbackDirection ?? _forwardVec).applyQuaternion(_impactInverseQuaternion);
+  }
+  if (_impactLocal.lengthSq() < 0.0001) _impactLocal.set(0, 0, 1);
+
+  const denom = Math.sqrt(
+    (_impactLocal.x * _impactLocal.x) / (6.4 * 6.4) +
+    (_impactLocal.y * _impactLocal.y) / (3.9 * 3.9) +
+    (_impactLocal.z * _impactLocal.z) / (10 * 10),
+  );
+  _impactLocal.multiplyScalar(1 / Math.max(denom, 0.0001));
+  _impactPosition.copy(_impactLocal).applyQuaternion(rotation).add(center);
+  _impactNormalLocal.set(
+    _impactLocal.x / (6.4 * 6.4),
+    _impactLocal.y / (3.9 * 3.9),
+    _impactLocal.z / 100,
+  ).normalize();
+  _shieldNormal.copy(_impactNormalLocal).applyQuaternion(rotation).normalize();
+  return { position: _impactPosition, normal: _shieldNormal };
+}
 const MISSILE_WEAPON: WeaponConfig = {
   id: 'homing-missile', name: 'HOMING MISSILE', fireRate: 0.2, projectileSpeed: 68,
   damage: 34, lifetime: 6.5, hitRadius: 2.8, convergenceDistance: 100, spreadRad: 0,
@@ -91,6 +131,7 @@ export class CombatManager {
   public readonly enemies: EnemyEntity[] = [];
   public transport: TransportEntity | null = null;
   public readonly playerHealth: HealthState;
+  public readonly playerShield: ShieldState;
   public readonly stats: CombatStats = {
     kills: 0,
     shotsFired: 0,
@@ -127,6 +168,8 @@ export class CombatManager {
 
   public constructor(playerMaxHull: number) {
     this.playerHealth = createHealthState(playerMaxHull);
+    const playerShieldCfg = Object.values(SHIP_CONFIGS).find((ship) => ship.maxHull === playerMaxHull);
+    this.playerShield = createShieldState(playerShieldCfg?.maxShield ?? Math.round(playerMaxHull * 0.75), playerShieldCfg?.shieldRechargeDelay ?? 4, playerShieldCfg?.shieldRechargeRate ?? 8);
   }
 
   public setCallbacks(callbacks: CombatCallbacks): void {
@@ -156,6 +199,13 @@ export class CombatManager {
   public clearCombatState(playerMaxHull: number, missionMode: boolean): void {
     this.missionMode = missionMode;
     resetHealthState(this.playerHealth, playerMaxHull);
+    const playerShieldCfg = Object.values(SHIP_CONFIGS).find((ship) => ship.maxHull === playerMaxHull);
+    resetShieldState(
+      this.playerShield,
+      playerShieldCfg?.maxShield ?? Math.round(playerMaxHull * 0.75),
+      playerShieldCfg?.shieldRechargeDelay ?? 4,
+      playerShieldCfg?.shieldRechargeRate ?? 8,
+    );
     this.projectiles.clear();
     this.enemies.length = 0;
     this.transport = null;
@@ -227,6 +277,7 @@ export class CombatManager {
         visualBankAngle: 0,
         collisionRadius: ENEMY_COLLISION_RADIUS,
         health: createHealthState(maxHull),
+        shield: createShieldState(pCfg.maxShield + (spec.hullBonus ? Math.round(spec.hullBonus * 0.3) : 0), pCfg.shieldRechargeDelay, pCfg.shieldRechargeRate),
         aiState: 'patrol',
         aiStateTimer: 0.3 + i * 0.18,
         reactionTimer: pCfg.reactionTime * diffProfile.reactionTimeScale,
@@ -301,6 +352,7 @@ export class CombatManager {
         visualBankAngle: 0,
         collisionRadius: ENEMY_COLLISION_RADIUS,
         health: createHealthState(pCfg.maxHull),
+        shield: createShieldState(pCfg.maxShield, pCfg.shieldRechargeDelay, pCfg.shieldRechargeRate),
         aiState: 'patrol',
         aiStateTimer: 0.4 + i * 0.25,
         reactionTimer: pCfg.reactionTime,
@@ -392,6 +444,11 @@ export class CombatManager {
     const safeDt = Math.min(Math.max(dt, 0.0001), 0.05);
     this.simTime += safeDt;
 
+    if (!this.playerHealth.isDestroyed) {
+      const recharge = updateShieldRecharge(this.playerShield, safeDt, this.simTime);
+      if (recharge.began) this.callbacks.onShieldRecharge?.(PLAYER_ENTITY_ID, true);
+    }
+
     // Decay transient feedback timers
     if (this.playerWeaponCooldown > 0) {
       this.playerWeaponCooldown = Math.max(0, this.playerWeaponCooldown - safeDt);
@@ -439,6 +496,8 @@ export class CombatManager {
       const enemy = this.enemies[i];
       if (!enemy.active || enemy.health.isDestroyed) continue;
       aliveEnemies += 1;
+      const recharge = updateShieldRecharge(enemy.shield, safeDt, this.simTime);
+      if (recharge.began) this.callbacks.onShieldRecharge?.(enemy.id, false);
 
       const targetTransport = enemy.targetTransport && this.transport?.active && !this.transport.health.isDestroyed;
       const targetPosition = targetTransport ? this.transport!.position : flight.position;
@@ -498,6 +557,10 @@ export class CombatManager {
     // 6. Sync Live Combat Telemetry & Screen-Space Projections (Zero Allocations)
     telemetry.hull = this.playerHealth.current;
     telemetry.maxHull = this.playerHealth.max;
+    telemetry.shield = this.playerShield.current;
+    telemetry.maxShield = this.playerShield.max;
+    telemetry.shieldRecharging = this.playerShield.isRecharging;
+    telemetry.shieldBroken = this.playerShield.isBroken;
     telemetry.playerDestroyed = this.playerHealth.isDestroyed;
     telemetry.isFiring = isFiring;
     telemetry.weaponName = this.playerWeapon.name;
@@ -747,23 +810,35 @@ export class CombatManager {
             // Deactivate projectile immediately so it can NEVER apply damage twice
             this.projectiles.release(p);
 
-            const dmgRes = applyDamage(enemy.health, p.damage, p.ownerId, this.simTime);
+            const dmgRes = applyShieldedDamage(enemy.shield, enemy.health, p.damage, p.ownerId, this.simTime);
             if (!dmgRes.applied) break;
 
             this.stats.shotsHit += 1;
-            this.stats.damageDealt += dmgRes.appliedAmount;
+            this.stats.damageDealt += dmgRes.hullDamage;
             this.hitMarkerTimer = 0.16;
+
+            if (dmgRes.shieldDamage > 0) {
+              const impact = projectShieldImpact(enemy.position, enemy.quaternion, _hitPoint);
+              this.callbacks.onVfxBurst?.({ kind: dmgRes.shieldBrokenNow ? 'shield-break' : 'shield-hit', position: impact.position, normal: impact.normal, color: '#22d3ee', scale: dmgRes.shieldBrokenNow ? 1.2 : 0.7 });
+              if (dmgRes.shieldBrokenNow) this.callbacks.onShieldBreak?.(enemy.id, false);
+            } else {
+              this.callbacks.onVfxBurst?.({ kind: 'impact', position: _hitPoint, color: '#22d3ee', scale: 0.7 });
+            }
 
             this.callbacks.onDamage?.({
               targetId: enemy.id,
               attackerId: p.ownerId,
               weaponId: p.weaponId,
-              amount: dmgRes.appliedAmount,
+              amount: dmgRes.hullDamage,
               remainingHealth: dmgRes.remaining,
               maxHealth: enemy.health.max,
               destroyed: dmgRes.destroyedNow,
               hitPoint: _hitPoint,
               timestamp: this.simTime,
+              shieldDamage: dmgRes.shieldDamage,
+              hullDamage: dmgRes.hullDamage,
+              shieldRemaining: enemy.shield.current,
+              maxShield: enemy.shield.max,
             });
 
             if (dmgRes.destroyedNow) {
@@ -791,12 +866,6 @@ export class CombatManager {
               });
             } else {
               this.ai.triggerDamageReaction(enemy, flight.position, this.simTime);
-              this.callbacks.onVfxBurst?.({
-                kind: 'impact',
-                position: _hitPoint,
-                color: '#22d3ee',
-                scale: 0.7,
-              });
             }
             break;
           }
@@ -849,16 +918,20 @@ export class CombatManager {
         ) {
           this.projectiles.release(p);
 
-          const dmgRes = applyDamage(this.playerHealth, p.damage, p.ownerId, this.simTime);
+          const dmgRes = applyShieldedDamage(this.playerShield, this.playerHealth, p.damage, p.ownerId, this.simTime);
           if (!dmgRes.applied) continue;
 
-          this.stats.damageTaken += dmgRes.appliedAmount;
+          this.stats.damageTaken += dmgRes.hullDamage;
           this.damageFlashTimer = 0.32;
           this.cameraImpulse = Math.min(1, this.cameraImpulse + 0.55);
 
+          const shieldImpact = dmgRes.shieldDamage > 0
+            ? projectShieldImpact(flight.position, flight.quaternion, _hitPoint)
+            : null;
           this.callbacks.onVfxBurst?.({
-            kind: 'player-hit',
-            position: _hitPoint,
+            kind: dmgRes.shieldDamage > 0 ? (dmgRes.shieldBrokenNow ? 'shield-break' : 'shield-hit') : 'player-hit',
+            position: shieldImpact?.position ?? _hitPoint,
+            normal: shieldImpact?.normal,
             color: '#f97316',
             scale: 0.75,
           });
@@ -866,13 +939,18 @@ export class CombatManager {
             targetId: PLAYER_ENTITY_ID,
             attackerId: p.ownerId,
             weaponId: p.weaponId,
-            amount: dmgRes.appliedAmount,
+            amount: dmgRes.hullDamage,
             remainingHealth: dmgRes.remaining,
             maxHealth: this.playerHealth.max,
             destroyed: dmgRes.destroyedNow,
             hitPoint: _hitPoint,
             timestamp: this.simTime,
+            shieldDamage: dmgRes.shieldDamage,
+            hullDamage: dmgRes.hullDamage,
+            shieldRemaining: this.playerShield.current,
+            maxShield: this.playerShield.max,
           });
+          if (dmgRes.shieldBrokenNow) this.callbacks.onShieldBreak?.(PLAYER_ENTITY_ID, true);
 
           if (dmgRes.destroyedNow) {
             this.callbacks.onVfxBurst?.({
@@ -918,13 +996,36 @@ export class CombatManager {
 
         // Mild hull collision impact (rate-limited by lastHitTime)
         if (this.simTime - this.playerHealth.lastHitTime > 0.6) {
-          const dmgRes = applyDamage(this.playerHealth, 12, enemy.id, this.simTime);
+          const dmgRes = applyShieldedDamage(this.playerShield, this.playerHealth, 12, enemy.id, this.simTime);
           if (dmgRes.applied) {
-            this.stats.damageTaken += dmgRes.appliedAmount;
+            this.stats.damageTaken += dmgRes.hullDamage;
             this.damageFlashTimer = 0.35;
             this.cameraImpulse = Math.min(1, this.cameraImpulse + 0.65);
+            if (dmgRes.shieldDamage > 0) {
+              const impact = projectShieldImpact(flight.position, flight.quaternion, flight.position, _impactDelta.subVectors(flight.position, enemy.position));
+              this.callbacks.onVfxBurst?.({ kind: dmgRes.shieldBrokenNow ? 'shield-break' : 'shield-hit', position: impact.position, normal: impact.normal, color: '#22d3ee', scale: 0.8 });
+              if (dmgRes.shieldBrokenNow) this.callbacks.onShieldBreak?.(PLAYER_ENTITY_ID, true);
+            }
+            if (dmgRes.destroyedNow) {
+              this.callbacks.onVfxBurst?.({ kind: 'explosion', position: flight.position, color: '#f97316', scale: 1.5 });
+              this.callbacks.onDestruction?.({ entityId: PLAYER_ENTITY_ID, faction: 'player', killerId: enemy.id, position: flight.position, timestamp: this.simTime });
+            }
           }
-          applyDamage(enemy.health, 16, PLAYER_ENTITY_ID, this.simTime);
+          const enemyDamage = applyShieldedDamage(enemy.shield, enemy.health, 16, PLAYER_ENTITY_ID, this.simTime);
+          if (enemyDamage.shieldDamage > 0) {
+            const impact = projectShieldImpact(enemy.position, enemy.quaternion, enemy.position, _impactDelta.subVectors(enemy.position, flight.position));
+            this.callbacks.onVfxBurst?.({ kind: enemyDamage.shieldBrokenNow ? 'shield-break' : 'shield-hit', position: impact.position, normal: impact.normal, color: '#fb923c', scale: 0.8 });
+            if (enemyDamage.shieldBrokenNow) this.callbacks.onShieldBreak?.(enemy.id, false);
+          }
+          if (enemyDamage.destroyedNow) {
+            enemy.active = false;
+            enemy.aiState = 'destroyed';
+            this.stats.kills += 1;
+            this.stats.score += 100 * enemy.difficulty;
+            this.killMarkerTimer = 0.34;
+            this.callbacks.onVfxBurst?.({ kind: 'explosion', position: enemy.position, color: '#38bdf8', scale: 1.35 });
+            this.callbacks.onDestruction?.({ entityId: enemy.id, callsign: enemy.callsign, isPriorityTarget: enemy.isPriorityTarget, faction: 'enemy', killerId: PLAYER_ENTITY_ID, position: enemy.position, timestamp: this.simTime });
+          }
           this.ai.triggerDamageReaction(enemy, flight.position, this.simTime);
         }
       }

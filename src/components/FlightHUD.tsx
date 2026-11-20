@@ -51,6 +51,9 @@ export function FlightHUD({
   const rollRef = useRef<HTMLSpanElement>(null);
   const hullNumRef = useRef<HTMLSpanElement>(null);
   const hullBarRef = useRef<HTMLDivElement>(null);
+  const shieldNumRef = useRef<HTMLSpanElement>(null);
+  const shieldBarRef = useRef<HTMLDivElement>(null);
+  const shieldStatusRef = useRef<HTMLSpanElement>(null);
   const boostNumRef = useRef<HTMLSpanElement>(null);
   const boostBarRef = useRef<HTMLDivElement>(null);
   const boostLabelRef = useRef<HTMLSpanElement>(null);
@@ -180,8 +183,7 @@ export function FlightHUD({
       // 2. Player Hull Integrity & Weapon State
       const hullRatio = Math.max(0, Math.min(1, t.hull / Math.max(t.maxHull, 1)));
       if (hullNumRef.current) {
-        const hullPct = Math.round(hullRatio * 100);
-        hullNumRef.current.textContent = `${hullPct}%`;
+        hullNumRef.current.textContent = `${Math.ceil(t.hull)} / ${Math.ceil(t.maxHull)}`;
         hullNumRef.current.style.color =
           hullRatio <= 0.3 ? '#f87171' : hullRatio <= 0.55 ? '#fbbf24' : '#f1f5f9';
       }
@@ -189,6 +191,19 @@ export function FlightHUD({
         hullBarRef.current.style.transform = `scaleX(${hullRatio})`;
         hullBarRef.current.style.backgroundColor =
           hullRatio <= 0.3 ? '#ef4444' : hullRatio <= 0.55 ? '#f59e0b' : '#38bdf8';
+      }
+      const shieldRatio = Math.max(0, Math.min(1, t.shield / Math.max(t.maxShield, 1)));
+      if (shieldNumRef.current) {
+        shieldNumRef.current.textContent = `${Math.ceil(t.shield)} / ${Math.ceil(t.maxShield)}`;
+        shieldNumRef.current.style.color = t.shieldBroken ? '#fb7185' : shieldRatio <= 0.3 ? '#fbbf24' : '#a5f3fc';
+      }
+      if (shieldBarRef.current) {
+        shieldBarRef.current.style.transform = `scaleX(${shieldRatio})`;
+        shieldBarRef.current.style.backgroundColor = t.shieldBroken ? '#fb7185' : shieldRatio <= 0.3 ? '#f59e0b' : '#22d3ee';
+      }
+      if (shieldStatusRef.current) {
+        shieldStatusRef.current.textContent = t.shieldBroken ? 'SHIELD BREAK' : t.shieldRecharging ? 'RECHARGING' : 'ONLINE';
+        shieldStatusRef.current.style.color = t.shieldBroken ? '#fb7185' : t.shieldRecharging ? '#67e8f9' : '#94a3b8';
       }
 
       if (weaponStatusRef.current) {
@@ -881,25 +896,33 @@ export function FlightHUD({
       {/* Bottom Tactical Instrument Strip + Collapsible Control Hints */}
       <div className="flex flex-col items-center gap-2.5">
         <div className="grid w-full max-w-4xl grid-cols-1 gap-3 sm:grid-cols-3">
-          {/* Left: Hull Integrity & Primary Weapon Status */}
+          {/* Left: Defensive Systems & Primary Weapon Status */}
           <div className="border border-slate-700/70 bg-[#040a18]/84 px-4 py-3">
             <div className="flex items-baseline justify-between">
-              <span className="text-xs font-medium text-slate-400">Hull Integrity</span>
+              <span className="text-xs font-medium text-cyan-200">Shield</span>
+              <span ref={shieldNumRef} className="font-mono text-xs font-semibold tabular-nums text-cyan-100">{ship.maxShield} / {ship.maxShield}</span>
+            </div>
+            <div className="mt-1 h-1 w-full overflow-hidden bg-slate-800">
+              <div ref={shieldBarRef} className="h-full w-full origin-left bg-cyan-400" style={{ transform: 'scaleX(1)', willChange: 'transform' }} />
+            </div>
+            <div className="flex items-baseline justify-between">
+              <span className="text-xs font-medium text-slate-400">Hull</span>
               <span
                 ref={hullNumRef}
-                className="font-mono text-sm font-semibold tabular-nums text-slate-100"
+                className="font-mono text-xs font-semibold tabular-nums text-slate-100"
               >
-                100%
+                {ship.maxHull} / {ship.maxHull}
               </span>
             </div>
-            <div className="mt-2 h-1.5 w-full overflow-hidden bg-slate-800">
+            <div className="mt-1 h-1 w-full overflow-hidden bg-slate-800">
               <div
                 ref={hullBarRef}
                 className="h-full w-full origin-left bg-sky-400"
                 style={{ transform: 'scaleX(1)', willChange: 'transform' }}
               />
             </div>
-            <div className="mt-1.5 flex items-center justify-between text-[11px]">
+            <div className="mt-1.5 flex items-center justify-between text-[10px]">
+              <span ref={shieldStatusRef} className="font-mono text-slate-400">ONLINE</span>
               <span className="text-slate-400">{ship.weapons.primaryName}</span>
               <span ref={weaponStatusRef} className="font-mono font-medium text-slate-300">
                 READY

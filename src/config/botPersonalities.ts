@@ -23,6 +23,9 @@ export const BOT_PERSONALITIES: Record<BotPersonality, BotPersonalityConfig> = {
     evadeDuration: 1.4,
     weaponId: 'enemy_pulse_aggressor',
     maxHull: 80,
+    maxShield: 38,
+    shieldRechargeDelay: 4.2,
+    shieldRechargeRate: 6,
   },
   flanker: {
     id: 'flanker',
@@ -43,6 +46,9 @@ export const BOT_PERSONALITIES: Record<BotPersonality, BotPersonalityConfig> = {
     evadeDuration: 1.65,
     weaponId: 'enemy_pulse_flanker',
     maxHull: 70,
+    maxShield: 34,
+    shieldRechargeDelay: 3.8,
+    shieldRechargeRate: 6,
   },
   defender: {
     id: 'defender',
@@ -63,6 +69,9 @@ export const BOT_PERSONALITIES: Record<BotPersonality, BotPersonalityConfig> = {
     evadeDuration: 1.85,
     weaponId: 'enemy_pulse_defender',
     maxHull: 105,
+    maxShield: 52,
+    shieldRechargeDelay: 4.8,
+    shieldRechargeRate: 6,
   },
   ace: {
     id: 'ace',
@@ -83,6 +92,9 @@ export const BOT_PERSONALITIES: Record<BotPersonality, BotPersonalityConfig> = {
     evadeDuration: 1.5,
     weaponId: 'enemy_pulse_ace',
     maxHull: 95,
+    maxShield: 46,
+    shieldRechargeDelay: 4.5,
+    shieldRechargeRate: 6,
   },
 };
 

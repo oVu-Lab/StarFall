@@ -39,12 +39,26 @@ interface ShockwaveSlot {
   maxAge: number;
   maxScale: number;
   isExplosion: boolean;
+  isShield: boolean;
+}
+
+interface ShockMeshSlot {
+  group: THREE.Group;
+  core: THREE.Mesh;
+  coreMat: THREE.MeshBasicMaterial;
+  ring: THREE.Mesh;
+  ringMat: THREE.MeshBasicMaterial;
+  flash: THREE.Sprite;
+  flashMat: THREE.SpriteMaterial;
+  arcs: THREE.LineSegments;
+  arcMat: THREE.LineBasicMaterial;
 }
 
 const _dummy = new THREE.Object3D();
 const _upVec = new THREE.Vector3(0, 1, 0);
 const _quat = new THREE.Quaternion();
 const _hiddenScale = new THREE.Vector3(0, 0, 0);
+const _ringNormal = new THREE.Vector3(0, 0, 1);
 
 /**
  * Pooled high-craft combat visual effects renderer:
@@ -116,6 +130,32 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
 
     const shockSphereGeo = useMemo(() => new THREE.SphereGeometry(1, 14, 10), []);
     const shockRingGeo = useMemo(() => new THREE.RingGeometry(0.76, 1.0, 24), []);
+    const shockArcGeo = useMemo(() => {
+      const points: number[] = [];
+      const arcs = [
+        { start: -2.45, end: -0.42, phase: 0.2 },
+        { start: 0.25, end: 2.7, phase: 1.8 },
+        { start: 3.35, end: 5.75, phase: 3.1 },
+      ];
+      for (const arc of arcs) {
+        const segments = 12;
+        let px = 0;
+        let py = 0;
+        for (let i = 0; i <= segments; i++) {
+          const t = i / segments;
+          const angle = arc.start + (arc.end - arc.start) * t;
+          const radius = 0.9 + Math.sin(t * 31 + arc.phase) * 0.07 + Math.sin(t * 53 + arc.phase) * 0.035;
+          const x = Math.cos(angle) * radius;
+          const y = Math.sin(angle) * radius;
+          if (i > 0) points.push(px, py, 0.012, x, y, 0.012);
+          px = x;
+          py = y;
+        }
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
+      return geometry;
+    }, []);
 
     const particles = useMemo<SparkParticle[]>(() => {
       const arr: SparkParticle[] = [];
@@ -144,13 +184,14 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
           maxAge: 0.6,
           maxScale: 16,
           isExplosion: true,
+          isShield: false,
         });
       }
       return arr;
     }, []);
     const shockCursor = useRef(0);
 
-    const shockMeshes = useMemo(() => {
+    const shockMeshes = useMemo<ShockMeshSlot[]>(() => {
       return Array.from({ length: MAX_SHOCKWAVE_POOL }, () => {
         const group = new THREE.Group();
         group.visible = false;
@@ -178,6 +219,17 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
         const ring = new THREE.Mesh(shockRingGeo, ringMat);
         group.add(ring);
 
+        const arcMat = new THREE.LineBasicMaterial({
+          color: '#e0f2fe',
+          transparent: true,
+          opacity: 0,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          toneMapped: false,
+        });
+        const arcs = new THREE.LineSegments(shockArcGeo, arcMat);
+        group.add(arcs);
+
         const flashMat = new THREE.SpriteMaterial({
           map: glowSpriteTex,
           color: '#7dd3fc',
@@ -189,9 +241,9 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
         const flash = new THREE.Sprite(flashMat);
         group.add(flash);
 
-        return { group, core, coreMat, ring, ringMat, flash, flashMat };
+        return { group, core, coreMat, ring, ringMat, flash, flashMat, arcs, arcMat };
       });
-    }, [shockRingGeo, shockSphereGeo, glowSpriteTex]);
+    }, [shockArcGeo, shockRingGeo, shockSphereGeo, glowSpriteTex]);
 
     const graphicsRef = useRef(graphics);
     graphicsRef.current = graphics;
@@ -209,10 +261,12 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
         sparkMat.dispose();
         shockSphereGeo.dispose();
         shockRingGeo.dispose();
+        shockArcGeo.dispose();
         for (const m of shockMeshes) {
           m.coreMat.dispose();
           m.ringMat.dispose();
           m.flashMat.dispose();
+          m.arcMat.dispose();
         }
       };
     }, [
@@ -225,6 +279,7 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
       playerBoltMat,
       shockMeshes,
       shockRingGeo,
+      shockArcGeo,
       shockSphereGeo,
       sparkGeo,
       sparkMat,
@@ -236,7 +291,9 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
         spawnBurst: (evt: VfxBurstEvent) => {
           const gfx = graphicsRef.current;
           const isExplosion = evt.kind === 'explosion';
-          const baseCount = isExplosion ? 32 : 9;
+          const isShield = evt.kind === 'shield-hit' || evt.kind === 'shield-break';
+          const isShieldBreak = evt.kind === 'shield-break';
+          const baseCount = isExplosion ? 32 : isShieldBreak ? 20 : isShield ? 12 : 9;
           const sparkCount = Math.max(4, Math.round(baseCount * gfx.sparkScaleFactor));
           const sparkPoolLimit = Math.min(MAX_SPARK_POOL, gfx.maxSparkParticles);
           const shockPoolLimit = Math.min(MAX_SHOCKWAVE_POOL, gfx.maxShockwaves);
@@ -247,19 +304,17 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
           sw.active = true;
           sw.position.copy(evt.position);
           sw.age = 0;
-          sw.maxAge = isExplosion ? 0.68 : 0.22;
-          sw.maxScale = isExplosion ? 18 * evt.scale : 4.2 * evt.scale;
+          sw.maxAge = isExplosion ? 0.68 : isShieldBreak ? 0.5 : isShield ? 0.3 : 0.22;
+          sw.maxScale = isExplosion ? 18 * evt.scale : isShieldBreak ? 10 * evt.scale : isShield ? 6.2 * evt.scale : 4.2 * evt.scale;
           sw.isExplosion = isExplosion;
+          sw.isShield = isShield;
 
           const meshSlot = shockMeshes[swIdx];
-          meshSlot.ring.rotation.set(
-            Math.random() * Math.PI,
-            Math.random() * Math.PI,
-            Math.random() * Math.PI,
-          );
+          meshSlot.ring.quaternion.setFromUnitVectors(_ringNormal, evt.normal?.normalize() ?? _ringNormal);
           const accentColor =
-            evt.kind === 'player-hit' ? '#fb923c' : isExplosion ? '#38bdf8' : '#22d3ee';
+            evt.kind === 'player-hit' ? '#fb923c' : isExplosion ? '#38bdf8' : isShield ? '#67e8f9' : '#22d3ee';
           meshSlot.ringMat.color.set(accentColor);
+          meshSlot.arcMat.color.set(isShield ? '#e0f2fe' : accentColor);
           meshSlot.flashMat.color.set(isExplosion ? '#f59e0b' : accentColor);
           meshSlot.coreMat.color.set(isExplosion ? '#fef3c7' : '#e0f2fe');
 
@@ -277,13 +332,15 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
               : 14 + Math.random() * 38;
             p.velocity.set(r * Math.cos(theta) * speed, u * speed, r * Math.sin(theta) * speed);
             p.age = 0;
-            p.maxAge = isExplosion ? 0.45 + Math.random() * 0.55 : 0.18 + Math.random() * 0.22;
+            p.maxAge = isExplosion ? 0.45 + Math.random() * 0.55 : isShieldBreak ? 0.35 + Math.random() * 0.25 : 0.18 + Math.random() * 0.22;
             p.size = isExplosion ? 0.7 + Math.random() * 1.45 : 0.45 + Math.random() * 0.65;
 
             if (isExplosion) {
               p.color.set(i % 3 === 0 ? '#67e8f9' : i % 2 === 0 ? '#fb923c' : '#fef3c7');
             } else if (evt.kind === 'player-hit') {
               p.color.set('#fb923c');
+            } else if (isShield) {
+              p.color.set(i % 3 === 0 ? '#ffffff' : '#67e8f9');
             } else {
               p.color.set('#67e8f9');
             }
@@ -429,7 +486,12 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
 
         const ringScale = 0.8 + easeOut * sw.maxScale;
         m.ring.scale.setScalar(ringScale);
-        m.ringMat.opacity = (1 - t) * (sw.isExplosion ? 0.85 : 0.65);
+        m.ringMat.opacity = (1 - t) * (sw.isExplosion ? 0.85 : sw.isShield ? 0.95 : 0.65);
+        m.arcs.visible = sw.isShield && gfx.postGlowEnabled;
+        if (m.arcs.visible) {
+          m.arcs.scale.setScalar(ringScale * 0.84);
+          m.arcMat.opacity = Math.pow(1 - t, 1.6) * (0.72 + 0.28 * Math.sin(sw.age * 74));
+        }
 
         const coreScale = sw.isExplosion
           ? (0.6 + easeOut * sw.maxScale * 0.42) * (1 - t * 0.35)
@@ -443,7 +505,7 @@ export const CombatVFX = forwardRef<CombatVFXHandle, CombatVFXProps>(
             ? sw.maxScale * (1.2 + easeOut * 0.9)
             : sw.maxScale * 1.4;
           m.flash.scale.setScalar(spriteScale);
-          m.flashMat.opacity = Math.pow(1 - t, 1.4) * (sw.isExplosion ? 0.9 : 0.6);
+        m.flashMat.opacity = Math.pow(1 - t, 1.4) * (sw.isExplosion ? 0.9 : sw.isShield ? 0.95 : 0.6);
         }
       }
 
