@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { BOT_PERSONALITIES, resolveBotDifficultyTuning } from '../../config/botPersonalities';
 import { WEAPON_CONFIGS } from '../../config/weapons';
-import type { EnemyEntity } from '../../types/combat';
+import type { CombatEngagementZoneState, EnemyEntity } from '../../types/combat';
 import type { ProjectilePool } from './ProjectilePool';
 
 // Reusable scratch vectors & quaternions (zero GC in frame loop)
@@ -24,6 +24,10 @@ const _zeroVec = new THREE.Vector3(0, 0, 0);
 const _relativeFromTarget = new THREE.Vector3();
 const _targetForward = new THREE.Vector3();
 const _targetRight = new THREE.Vector3();
+const _toZoneCenter = new THREE.Vector3();
+const _zoneClampedOffset = new THREE.Vector3();
+const _zonePredictedCenter = new THREE.Vector3();
+const _returnTarget = new THREE.Vector3();
 
 export const MAX_SIMULTANEOUS_ATTACK_RUNS = 2;
 export const ATTACK_RUN_DURATION_SEC: Record<EnemyEntity['personality'], number> = {
@@ -128,6 +132,7 @@ export class EnemyAIController {
     projectiles: ProjectilePool,
     allEnemies: EnemyEntity[],
     targetForward?: THREE.Vector3,
+    zone?: CombatEngagementZoneState,
   ): EnemyAIUpdateResult {
     const safeDt = Math.min(Math.max(dt, 0.0001), 0.05);
     const out: EnemyAIUpdateResult = { fired: false, fireOrigin: _resultOrigin };
@@ -183,20 +188,51 @@ export class EnemyAIController {
       }
     }
 
+    const zoneActive = Boolean(zone?.active);
+    const distToZone = zoneActive ? enemy.position.distanceTo(zone!.center) : 0;
+    const targetDistToZone = zoneActive ? targetPos.distanceTo(zone!.center) : 0;
+    const isTargetingProtected = enemy.targetRelay || enemy.targetTransport;
+    const targetOutOfLeash = zoneActive && !isTargetingProtected && targetDistToZone > zone!.leashRadius;
+    const returnThreshold = zoneActive ? zone!.activeRadius * 0.85 : 0;
+
+    if (zoneActive) {
+      if (enemy.returningToZone) {
+        if (distToZone <= returnThreshold) {
+          enemy.returningToZone = false;
+          if (targetOutOfLeash) {
+            enemy.aiState = 'patrol';
+          } else if (enemy.aiState === 'reposition') {
+            enemy.aiState = 'pursue';
+            enemy.aiStateTimer = 2.0;
+          }
+        }
+      } else if (distToZone > zone!.softBoundaryRadius || (targetOutOfLeash && distToZone > returnThreshold)) {
+        enemy.returningToZone = true;
+        if (enemy.aiState === 'engage' || enemy.aiState === 'pursue') {
+          this.beginReposition(enemy, targetPos, personality.preferredRange, _targetForward, zone);
+        }
+      }
+      enemy.patrolAnchor.copy(zone!.center);
+    } else {
+      enemy.returningToZone = false;
+    }
+
     // 1. State Machine Transitions
     if (!targetAlive) {
       enemy.aiState = 'patrol';
     } else {
       switch (enemy.aiState) {
         case 'patrol': {
-          if (distToPlayer <= personality.detectionRange) {
+          if (!targetOutOfLeash && !enemy.returningToZone && distToPlayer <= personality.detectionRange) {
             enemy.aiState = 'acquire';
             enemy.aiStateTimer = tuning.reactionTime;
           }
           break;
         }
         case 'acquire': {
-          if (enemy.aiStateTimer <= 0) {
+          if (targetOutOfLeash) {
+            enemy.aiState = 'patrol';
+          } else if (enemy.aiStateTimer <= 0) {
             const canEngage = distToPlayer <= personality.engageRange && isInFrontAttackArea && attackRunSlotAvailable;
             enemy.aiState = canEngage ? 'engage' : 'pursue';
             enemy.aiStateTimer = canEngage ? ATTACK_RUN_DURATION_SEC[personality.id] : 2.4;
@@ -205,8 +241,8 @@ export class EnemyAIController {
         }
         case 'pursue': {
           if (distToPlayer <= personality.minSafeDistance) {
-            this.beginReposition(enemy, targetPos, personality.preferredRange, _targetForward);
-          } else if (distToPlayer <= personality.engageRange && isInFrontAttackArea && attackRunSlotAvailable) {
+            this.beginReposition(enemy, targetPos, personality.preferredRange, _targetForward, zone);
+          } else if (!enemy.returningToZone && !targetOutOfLeash && distToPlayer <= personality.engageRange && isInFrontAttackArea && attackRunSlotAvailable) {
             enemy.aiState = 'engage';
             enemy.aiStateTimer = ATTACK_RUN_DURATION_SEC[personality.id];
           }
@@ -220,16 +256,16 @@ export class EnemyAIController {
             personality.engageRange,
             enemy.aiStateTimer,
           );
-          if (runEndReason) {
-            // End only for a close pass, leaving the engagement envelope, or using the full run window.
-            this.beginReposition(enemy, targetPos, personality.preferredRange, _targetForward);
+          if (runEndReason || enemy.returningToZone || targetOutOfLeash) {
+            // End only for a close pass, leaving the engagement envelope, zone leash, or using the full run window.
+            this.beginReposition(enemy, targetPos, personality.preferredRange, _targetForward, zone);
           }
           break;
         }
         case 'evade': {
           if (enemy.aiStateTimer <= 0) {
-            if (distToPlayer < personality.minSafeDistance * 1.2) {
-              this.beginReposition(enemy, targetPos, personality.preferredRange, _targetForward);
+            if (enemy.returningToZone || distToPlayer < personality.minSafeDistance * 1.2) {
+              this.beginReposition(enemy, targetPos, personality.preferredRange, _targetForward, zone);
             } else {
               enemy.aiState = 'pursue';
               enemy.aiStateTimer = 2.0;
@@ -239,11 +275,11 @@ export class EnemyAIController {
         }
         case 'reposition': {
           // Player heading can change while the enemy is breaking away. Keep the approach
-          // destination in the target's current world-space forward lane, not a stale snapshot.
-          this.setRepositionPoint(enemy, targetPos, personality.preferredRange, _targetForward);
+          // destination in the target's current world-space forward lane, clamped inside the CEZ.
+          this.setRepositionPoint(enemy, targetPos, personality.preferredRange, _targetForward, zone);
           const distToAnchor = enemy.position.distanceTo(enemy.repositionPoint);
-          if (distToAnchor < 38 || enemy.aiStateTimer <= 0) {
-            enemy.aiState = 'pursue';
+          if (!enemy.returningToZone && (distToAnchor < 38 || enemy.aiStateTimer <= 0)) {
+            enemy.aiState = targetOutOfLeash ? 'patrol' : 'pursue';
             enemy.aiStateTimer = 2.4;
           }
           break;
@@ -260,11 +296,15 @@ export class EnemyAIController {
 
     if (enemy.aiState === 'patrol') {
       enemy.patrolAngle += safeDt * 0.28;
+      const patrolRadius = zoneActive ? Math.min(115, zone!.innerRadius * 0.72) : 110;
       _desiredPos.set(
-        enemy.patrolAnchor.x + Math.cos(enemy.patrolAngle) * 110,
+        enemy.patrolAnchor.x + Math.cos(enemy.patrolAngle) * patrolRadius,
         enemy.patrolAnchor.y + Math.sin(enemy.patrolAngle * 1.3) * 24,
-        enemy.patrolAnchor.z + Math.sin(enemy.patrolAngle) * 110,
+        enemy.patrolAnchor.z + Math.sin(enemy.patrolAngle) * patrolRadius,
       );
+      if (zoneActive) {
+        _desiredPos.addScaledVector(zone!.velocity, 0.75);
+      }
       _desiredDir.subVectors(_desiredPos, enemy.position).normalize();
       targetSpeed = tuning.cruiseSpeed * 0.72;
     } else if (enemy.aiState === 'acquire') {
@@ -331,6 +371,33 @@ export class EnemyAIController {
     } else if (enemy.aiState === 'reposition') {
       _desiredDir.subVectors(enemy.repositionPoint, enemy.position).normalize();
       targetSpeed = tuning.boostSpeed * 0.96;
+    }
+
+    // 2b. Three-band soft CEZ boundary steering (smoothly blends inward without snapping)
+    if (zoneActive) {
+      _zonePredictedCenter.copy(zone!.center).addScaledVector(zone!.velocity, 1.0);
+      const spreadRadius = Math.min(48, zone!.innerRadius * 0.32);
+      _returnTarget.set(
+        _zonePredictedCenter.x + enemy.flankSign * spreadRadius * (personality.id === 'flanker' ? 1.0 : 0.45),
+        _zonePredictedCenter.y + enemy.flankSign * 14,
+        _zonePredictedCenter.z,
+      );
+      _toZoneCenter.subVectors(_returnTarget, enemy.position);
+      if (_toZoneCenter.lengthSq() > 0.0001) {
+        _toZoneCenter.normalize();
+      } else {
+        _toZoneCenter.set(0, 0, -1);
+      }
+
+      if (enemy.returningToZone) {
+        const t = THREE.MathUtils.smoothstep(distToZone, returnThreshold, zone!.softBoundaryRadius);
+        const returnWeight = THREE.MathUtils.clamp(0.55 + 0.45 * t, 0.55, 1.0);
+        _desiredDir.lerp(_toZoneCenter, returnWeight).normalize();
+        targetSpeed = Math.max(targetSpeed, tuning.boostSpeed * 0.92);
+      } else if (distToZone > zone!.activeRadius) {
+        const boundaryWeight = THREE.MathUtils.smoothstep(distToZone, zone!.activeRadius, zone!.softBoundaryRadius);
+        _desiredDir.lerp(_toZoneCenter, boundaryWeight * 0.65).normalize();
+      }
     }
 
     // 3. Soft wingman separation so enemy bots don't stack on top of each other
@@ -438,6 +505,7 @@ export class EnemyAIController {
     playerPos: THREE.Vector3,
     preferredRange: number,
     targetForward: THREE.Vector3,
+    zone?: CombatEngagementZoneState,
   ): void {
     enemy.aiState = 'reposition';
     enemy.aiStateTimer = 4.0;
@@ -447,7 +515,7 @@ export class EnemyAIController {
     if (_targetRight.lengthSq() < 0.01) _targetRight.set(1, 0, 0);
     else _targetRight.normalize();
 
-    this.setRepositionPoint(enemy, playerPos, preferredRange, targetForward);
+    this.setRepositionPoint(enemy, playerPos, preferredRange, targetForward, zone);
   }
 
   private setRepositionPoint(
@@ -455,6 +523,7 @@ export class EnemyAIController {
     targetPos: THREE.Vector3,
     preferredRange: number,
     targetForward: THREE.Vector3,
+    zone?: CombatEngagementZoneState,
   ): void {
     _targetRight.crossVectors(targetForward, _up);
     if (_targetRight.lengthSq() < 0.01) _targetRight.set(1, 0, 0);
@@ -465,5 +534,16 @@ export class EnemyAIController {
       .addScaledVector(targetForward, preferredRange * 0.72)
       .addScaledVector(_targetRight, enemy.flankSign * preferredRange * (enemy.personality === 'flanker' ? 0.68 : 0.4))
       .addScaledVector(_up, enemy.flankSign * 26);
+
+    if (zone?.active) {
+      _zonePredictedCenter.copy(zone.center).addScaledVector(zone.velocity, 0.75);
+      _zoneClampedOffset.subVectors(enemy.repositionPoint, _zonePredictedCenter);
+      const maxOffset = zone.activeRadius * 0.88;
+      const distSq = _zoneClampedOffset.lengthSq();
+      if (distSq > maxOffset * maxOffset) {
+        _zoneClampedOffset.multiplyScalar(maxOffset / Math.sqrt(distSq));
+        enemy.repositionPoint.copy(_zonePredictedCenter).add(_zoneClampedOffset);
+      }
+    }
   }
 }

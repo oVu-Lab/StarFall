@@ -154,8 +154,29 @@ export interface EnemyEntity {
   muzzleFlashTimer: number;
   targetTransport: boolean;
   targetRelay: boolean;
+  returningToZone?: boolean;
+  targetKind?: 'player' | 'relay' | 'transport';
+  targetLockTimer?: number;
+  recentPlayerThreatTimer?: number;
   missileLockTimer?: number;
   missileCooldown?: number;
+}
+
+export interface CombatEngagementZoneState {
+  id: string;
+  active: boolean;
+  anchorMode: 'static' | 'actor' | 'stage_centroid' | 'point';
+  center: THREE.Vector3;
+  velocity: THREE.Vector3;
+  targetCenter: THREE.Vector3;
+  targetVelocity: THREE.Vector3;
+  initialAnchorOffset: THREE.Vector3;
+  innerRadius: number;
+  activeRadius: number;
+  softBoundaryRadius: number;
+  leashRadius: number;
+  playerDistance: number;
+  playerInside: boolean;
 }
 
 export interface TransportEntity {

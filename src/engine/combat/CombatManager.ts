@@ -3,6 +3,7 @@ import { BOT_PERSONALITIES } from '../../config/botPersonalities';
 import { SHIP_CONFIGS } from '../../config/ships';
 import { WEAPON_CONFIGS } from '../../config/weapons';
 import type {
+  CombatEngagementZoneState,
   CombatStats,
   DamageEvent,
   DestructionEvent,
@@ -32,6 +33,11 @@ export const ENEMY_COLLISION_RADIUS = 3.6;
 export const MAX_ENEMIES = 6;
 export const TRANSPORT_ENTITY_ID = 'transport-1';
 
+export type EnemyTargetKind = 'player' | 'relay' | 'transport';
+
+export const TARGET_LOCK_HYSTERESIS_SEC = 2.5;
+export const PLAYER_THREAT_MEMORY_SEC = 4.5;
+
 export function shouldEnemyTargetRelay(personality: string, relayActive: boolean): boolean {
   return relayActive && (personality === 'aggressor' || personality === 'defender');
 }
@@ -41,6 +47,92 @@ export function shouldEnemyTargetTransport(
   transportActive: boolean,
 ): boolean {
   return transportActive && (personality === 'aggressor' || personality === 'defender');
+}
+
+export interface TargetSelectionInput {
+  personality: BotPersonality;
+  enemyPosition: THREE.Vector3;
+  playerPosition: THREE.Vector3;
+  playerAlive: boolean;
+  relayPosition?: THREE.Vector3 | null;
+  relayActive: boolean;
+  transportPosition?: THREE.Vector3 | null;
+  transportActive: boolean;
+  zone?: CombatEngagementZoneState | null;
+  currentTarget?: EnemyTargetKind;
+  targetLockTimer?: number;
+  recentPlayerThreatTimer?: number;
+}
+
+export function selectEnemyTarget(input: TargetSelectionInput): EnemyTargetKind {
+  const hasRelay = Boolean(input.relayActive && input.relayPosition);
+  const hasTransport = Boolean(input.transportActive && input.transportPosition);
+  if (!hasRelay && !hasTransport) return 'player';
+
+  const playerOutOfLeash = Boolean(
+    input.zone?.active && input.zone.center.distanceTo(input.playerPosition) > input.zone.leashRadius,
+  );
+
+  const scores: Partial<Record<EnemyTargetKind, number>> = {};
+
+  if (input.playerAlive) {
+    const duelBias =
+      input.personality === 'ace' ? 42
+      : input.personality === 'flanker' ? 35
+      : input.personality === 'aggressor' ? 28
+      : 20;
+    const threatBonus = (input.recentPlayerThreatTimer ?? 0) > 0 ? 40 : 0;
+    const dist = input.enemyPosition.distanceTo(input.playerPosition);
+    const leashPenalty = playerOutOfLeash ? -75 : 0;
+    scores.player = duelBias + threatBonus - dist / 30 + leashPenalty;
+  }
+
+  if (hasRelay && input.relayPosition) {
+    const objBias =
+      input.personality === 'defender' ? 55
+      : input.personality === 'aggressor' ? 46
+      : input.personality === 'flanker' ? 24
+      : 18;
+    const dist = input.enemyPosition.distanceTo(input.relayPosition);
+    scores.relay = objBias - dist / 35;
+  }
+
+  if (hasTransport && input.transportPosition) {
+    const objBias =
+      input.personality === 'defender' ? 55
+      : input.personality === 'aggressor' ? 46
+      : input.personality === 'flanker' ? 24
+      : 18;
+    const dist = input.enemyPosition.distanceTo(input.transportPosition);
+    scores.transport = objBias - dist / 35;
+  }
+
+  let bestKind: EnemyTargetKind = 'player';
+  let bestScore = -Infinity;
+  for (const kind of ['player', 'relay', 'transport'] as const) {
+    const s = scores[kind];
+    if (s !== undefined && s > bestScore) {
+      bestScore = s;
+      bestKind = kind;
+    }
+  }
+
+  const current = input.currentTarget;
+  const currentScore = current ? scores[current] : undefined;
+  if (current && currentScore !== undefined) {
+    if (current === 'player' && playerOutOfLeash) {
+      return bestKind;
+    }
+    if ((input.targetLockTimer ?? 0) > 0) {
+      return current;
+    }
+    const margin = Math.max(8, Math.abs(currentScore) * 0.2);
+    if (bestScore <= currentScore + margin) {
+      return current;
+    }
+  }
+
+  return bestKind;
 }
 
 export interface VfxBurstEvent {
@@ -166,6 +258,7 @@ export class CombatManager {
   private waveRespawnTimer = 0;
   private enemyIdCounter = 1;
   private missionMode = false;
+  private engagementZone: CombatEngagementZoneState | null = null;
   private callbacks: CombatCallbacks = {};
 
   // Short-lived HUD & visual feedback timers
@@ -191,6 +284,14 @@ export class CombatManager {
     this.callbacks = callbacks;
   }
 
+  public setEngagementZone(zone: CombatEngagementZoneState | null): void {
+    this.engagementZone = zone;
+  }
+
+  public getEngagementZone(): CombatEngagementZoneState | null {
+    return this.engagementZone;
+  }
+
   public getWeaponConfig(): WeaponConfig {
     return this.playerWeapon;
   }
@@ -213,6 +314,7 @@ export class CombatManager {
 
   public clearCombatState(playerMaxHull: number, missionMode: boolean): void {
     this.missionMode = missionMode;
+    if (!missionMode) this.engagementZone = null;
     resetHealthState(this.playerHealth, playerMaxHull);
     const playerShieldCfg = Object.values(SHIP_CONFIGS).find((ship) => ship.maxHull === playerMaxHull);
     resetShieldState(
@@ -267,16 +369,23 @@ export class CombatManager {
     this.stats.wave = wave.waveNumber;
     const diffProfile = DIFFICULTY_PROFILES[difficulty];
 
+    const useActorZone = Boolean(this.engagementZone?.active && this.engagementZone.anchorMode === 'actor');
+    const spawnOrigin = useActorZone ? this.engagementZone!.center : aroundPos;
+    const offsetAdjust = useActorZone ? this.engagementZone!.initialAnchorOffset : _zeroVelocity;
+
     for (let i = 0; i < wave.enemies.length && i < MAX_ENEMIES; i++) {
       const spec = wave.enemies[i];
       const pCfg = BOT_PERSONALITIES[spec.personality];
       const spawnPos = new THREE.Vector3(
-        aroundPos.x + spec.offset[0],
-        aroundPos.y + spec.offset[1],
-        aroundPos.z + spec.offset[2],
+        spawnOrigin.x + spec.offset[0] - offsetAdjust.x,
+        spawnOrigin.y + spec.offset[1] - offsetAdjust.y,
+        spawnOrigin.z + spec.offset[2] - offsetAdjust.z,
       );
       const id = `enemy-${this.enemyIdCounter++}`;
       const maxHull = pCfg.maxHull + (spec.hullBonus ?? 0);
+      const initRelay = shouldEnemyTargetRelay(spec.personality, Boolean(this.relay?.active));
+      const initTransport = !initRelay && shouldEnemyTargetTransport(spec.personality, Boolean(this.transport?.active));
+      const initTargetKind: EnemyTargetKind = initRelay ? 'relay' : initTransport ? 'transport' : 'player';
 
       const enemy: EnemyEntity = {
         id,
@@ -309,9 +418,12 @@ export class CombatManager {
         repositionPoint: spawnPos.clone(),
         hitFlashTimer: 0,
         muzzleFlashTimer: 0,
-        targetTransport: !shouldEnemyTargetRelay(spec.personality, Boolean(this.relay?.active)) &&
-          shouldEnemyTargetTransport(spec.personality, Boolean(this.transport?.active)),
-        targetRelay: shouldEnemyTargetRelay(spec.personality, Boolean(this.relay?.active)),
+        targetTransport: initTransport,
+        targetRelay: initRelay,
+        returningToZone: false,
+        targetKind: initTargetKind,
+        targetLockTimer: 1.5,
+        recentPlayerThreatTimer: 0,
         missileLockTimer: 0,
         missileCooldown: 8 + i * 5,
       };
@@ -484,6 +596,7 @@ export class CombatManager {
     this.enemies.length = 0;
     this.transport = null;
     this.relay = null;
+    this.engagementZone = null;
   }
 
   public updateTransport(dt: number): void {
@@ -590,8 +703,33 @@ export class CombatManager {
       const recharge = updateShieldRecharge(enemy.shield, safeDt, this.simTime);
       if (recharge.began) this.callbacks.onShieldRecharge?.(enemy.id, false);
 
-      const targetRelay = enemy.targetRelay && this.relay?.active && !this.relay.health.isDestroyed;
-      const targetTransport = enemy.targetTransport && this.transport?.active && !this.transport.health.isDestroyed;
+      enemy.targetLockTimer = Math.max(0, (enemy.targetLockTimer ?? 0) - safeDt);
+      enemy.recentPlayerThreatTimer = Math.max(0, (enemy.recentPlayerThreatTimer ?? 0) - safeDt);
+      const relayActive = Boolean(this.relay?.active && !this.relay.health.isDestroyed);
+      const transportActive = Boolean(this.transport?.active && !this.transport.health.isDestroyed);
+      const chosenTarget = selectEnemyTarget({
+        personality: enemy.personality,
+        enemyPosition: enemy.position,
+        playerPosition: flight.position,
+        playerAlive,
+        relayPosition: this.relay?.position,
+        relayActive,
+        transportPosition: this.transport?.position,
+        transportActive,
+        zone: this.engagementZone?.active ? this.engagementZone : null,
+        currentTarget: enemy.targetKind,
+        targetLockTimer: enemy.targetLockTimer,
+        recentPlayerThreatTimer: enemy.recentPlayerThreatTimer,
+      });
+      if (chosenTarget !== enemy.targetKind) {
+        enemy.targetKind = chosenTarget;
+        enemy.targetLockTimer = TARGET_LOCK_HYSTERESIS_SEC;
+      }
+      enemy.targetRelay = chosenTarget === 'relay';
+      enemy.targetTransport = chosenTarget === 'transport';
+
+      const targetRelay = enemy.targetRelay && relayActive;
+      const targetTransport = enemy.targetTransport && transportActive;
       const targetProtectedActor = targetRelay || targetTransport;
       const targetPosition = targetRelay ? this.relay!.position : targetTransport ? this.transport!.position : flight.position;
       const targetVelocity = targetRelay ? _zeroVelocity : targetTransport ? this.transport!.velocity : flight.velocity;
@@ -612,6 +750,7 @@ export class CombatManager {
         this.projectiles,
         this.enemies,
         _combatTargetForward.lengthSq() > 0.01 ? _combatTargetForward : undefined,
+        this.engagementZone?.active ? this.engagementZone : undefined,
       );
 
       if (aiRes.fired) {
@@ -986,6 +1125,7 @@ export class CombatManager {
                 timestamp: this.simTime,
               });
             } else {
+              enemy.recentPlayerThreatTimer = PLAYER_THREAT_MEMORY_SEC;
               this.ai.triggerDamageReaction(enemy, flight.position, this.simTime);
             }
             break;
@@ -1169,6 +1309,7 @@ export class CombatManager {
             this.callbacks.onVfxBurst?.({ kind: 'explosion', position: enemy.position, color: '#38bdf8', scale: 1.35 });
             this.callbacks.onDestruction?.({ entityId: enemy.id, callsign: enemy.callsign, isPriorityTarget: enemy.isPriorityTarget, faction: 'enemy', killerId: PLAYER_ENTITY_ID, position: enemy.position, timestamp: this.simTime });
           }
+          enemy.recentPlayerThreatTimer = PLAYER_THREAT_MEMORY_SEC;
           this.ai.triggerDamageReaction(enemy, flight.position, this.simTime);
         }
       }

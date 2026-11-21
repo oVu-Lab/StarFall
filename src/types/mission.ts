@@ -79,11 +79,27 @@ export interface ObjectiveDefinition {
   minIntegrity?: number;
 }
 
+export type ZoneAnchorMode = 'static' | 'actor' | 'stage_centroid' | 'point';
+
+export interface EngagementZoneDefinition {
+  id?: string;
+  anchorMode: ZoneAnchorMode;
+  /** Offset relative to missionOrigin for static/point anchors */
+  offset?: [number, number, number];
+  /** Actor id for actor-following anchors (e.g. 'transport-1' or relay id) */
+  actorId?: string;
+  innerRadius?: number;
+  activeRadius?: number;
+  softBoundaryRadius?: number;
+  leashRadius?: number;
+}
+
 export interface MissionStageDefinition {
   id: string;
   label: string;
   waveNumbers: number[];
   objectiveIds: string[];
+  engagementZone?: EngagementZoneDefinition;
 }
 
 export type MissionCondition =
@@ -199,6 +215,7 @@ export interface MissionDefinition {
   };
   relay?: RelayDefinition;
   extractionPoint?: ExtractionPointDefinition;
+  engagementZone?: EngagementZoneDefinition;
 }
 
 export interface MissionScoreBreakdown {

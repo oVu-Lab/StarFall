@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "node --import tsx --test MouseAlignment.test.ts tests/pointer-lock.test.ts tests/escort-mission.test.ts tests/mission-catalog.test.ts tests/mission-runtime.test.ts tests/mission-rewards.test.ts tests/save-repository.test.ts tests/collection.test.ts tests/combat-pacing.test.ts tests/enemy-engagement.test.ts tests/missiles.test.ts tests/shields.test.ts tests/pulse-cannon-vfx.test.ts tests/vanguard-model.test.ts tests/shield-impact-placement.test.ts && node --import tsx tests/alignment.test.ts"
+    "test": "node --import tsx --test MouseAlignment.test.ts tests/pointer-lock.test.ts tests/escort-mission.test.ts tests/mission-catalog.test.ts tests/mission-runtime.test.ts tests/mission-rewards.test.ts tests/save-repository.test.ts tests/collection.test.ts tests/combat-pacing.test.ts tests/enemy-engagement.test.ts tests/combat-engagement-zone.test.ts tests/missiles.test.ts tests/shields.test.ts tests/pulse-cannon-vfx.test.ts tests/vanguard-model.test.ts tests/shield-impact-placement.test.ts && node --import tsx tests/alignment.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
